@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RouleEditor Web — HomeBus</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>RouleEditor <span class="ver">Web</span></h1>
+    <div class="subtitle">HomeBus-Protokoll V1.2 · Editor · Simulator · serielle Konsole</div>
+    <div id="conn" class="conn">
+      <span id="wsDot" class="dot off"></span><span id="wsLabel">WS…</span>
+      <span id="serialDot" class="dot off"></span><span id="serialLabel">Port zu</span>
+    </div>
+  </header>
+
+  <nav id="tabs">
+    <button data-tab="settings" class="active">Einstellungen</button>
+    <button data-tab="automations">Automationen</button>
+    <button data-tab="ha">Home Assistant</button>
+    <button data-tab="editor">Editor (Experte)</button>
+    <button data-tab="monitor">Monitor</button>
+    <button data-tab="simulator">Simulator</button>
+  </nav>
+
+  <main>
+    <!-- ==================== SETTINGS ==================== -->
+    <section id="tab-settings" class="tab active">
+      <h2>Schnittstelle</h2>
+      <div class="grid">
+        <label>Port
+          <div class="row">
+            <select id="cfgPort"></select>
+            <button id="btnRefreshPorts" class="secondary">↻</button>
+          </div>
+        </label>
+        <label>Baudrate
+          <input id="cfgBaud" list="baudList" type="number" value="115200" />
+          <datalist id="baudList"></datalist>
+        </label>
+        <label>Parität <select id="cfgParity"></select></label>
+        <label>Datenbits <select id="cfgDataBits"></select></label>
+        <label>Stopbits <select id="cfgStopBits"></select></label>
+        <label class="check"><input id="cfgRtscts" type="checkbox" /> RTS/CTS Handshake</label>
+      </div>
+      <div class="row">
+        <button id="btnOpen">Öffnen</button>
+        <button id="btnClose" class="secondary">Schließen</button>
+        <span id="serialInfo" class="muted"></span>
+      </div>
+      <p class="hint" id="mockHint"></p>
+    </section>
+
+    <!-- ==================== AUTOMATIONEN ==================== -->
+    <section id="tab-automations" class="tab">
+      <div class="auto-toolbar">
+        <input id="autoSearch" placeholder="🔍 Auslöser suchen (Name, Raum, Modul …)" class="grow" />
+        <button id="btnAutoNew" class="secondary">＋ Neue Automation</button>
+        <button id="btnLabels" class="secondary">🏷 Bezeichnungen</button>
+        <span class="grow"></span>
+        <span id="autoDirty" class="muted small"></span>
+        <button id="btnAutoSave">Änderungen speichern</button>
+        <a id="btnAutoExport" class="btn secondary" href="api/rulebase/export?rebuild=1">Export .hrb</a>
+      </div>
+      <p class="hint auto-intro">Jede <b>Automation</b> reagiert auf einen <b>Auslöser</b> (ein Eingang/Taster ändert sich).
+        Darunter stehen <b>Regeln</b> nach dem Muster <b>WENN</b> (alle Bedingungen erfüllt) <b>DANN</b> (Aktionen ausführen).</p>
+      <div class="auto-split">
+        <aside class="auto-list">
+          <div id="autoTriggerList"></div>
+        </aside>
+        <div class="auto-detail">
+          <div id="autoDetail" class="muted">Links einen Auslöser wählen – oder oben „Neue Automation" anlegen.</div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ==================== HOME ASSISTANT ==================== -->
+    <section id="tab-ha" class="tab">
+      <h2>Betriebsart</h2>
+      <p class="hint">
+        <b>Bridge</b> — Home Assistant orchestriert: die Regelbasis läuft <i>nicht</i>,
+        alle Eingänge werden als Entitäten gemeldet, alle Ausgänge nur auf HA-Befehl geschaltet.<br />
+        <b>Original</b> — die Regelbasis (.hrb) schaltet wie bisher selbst.<br />
+        <b>Beides</b> — Übergangsbetrieb: Regeln laufen und die Entitäten werden zusätzlich gemeldet.
+      </p>
+      <div class="row">
+        <select id="haMode">
+          <option value="bridge">Bridge (Home Assistant steuert)</option>
+          <option value="rules">Original (Regelbasis steuert)</option>
+          <option value="both">Beides (Übergang)</option>
+        </select>
+        <button id="btnHaMode">Übernehmen</button>
+        <span id="haModeInfo" class="muted"></span>
+      </div>
+
+      <h2>MQTT-Broker</h2>
+      <div class="grid">
+        <label>Host <input id="mqHost" value="core-mosquitto" /></label>
+        <label>Port <input id="mqPort" type="number" value="1883" /></label>
+        <label>Benutzer <input id="mqUser" /></label>
+        <label>Passwort <input id="mqPass" type="password" /></label>
+        <label>Basis-Topic <input id="mqBase" value="heimauto" /></label>
+        <label>Discovery-Prefix <input id="mqPrefix" value="homeassistant" /></label>
+      </div>
+      <div class="row">
+        <button id="btnMqConnect">Verbinden</button>
+        <button id="btnMqDisconnect" class="secondary">Trennen</button>
+        <button id="btnMqDiscovery" class="secondary">Discovery neu senden</button>
+        <span id="mqStatus" class="muted"></span>
+      </div>
+
+      <h2>Entitäten <span id="entCount" class="muted"></span></h2>
+      <div class="row">
+        <input id="entSearch" placeholder="🔍 filtern (Name, Adresse, Typ …)" class="grow" />
+        <select id="entKind">
+          <option value="">alle Typen</option>
+          <option value="cover">Jalousie</option>
+          <option value="dimmer">Dimmer</option>
+          <option value="light">Licht</option>
+          <option value="switch">Schalter</option>
+          <option value="button">Taster (Eingang)</option>
+        </select>
+        <label class="check"><input id="entOnlyEnabled" type="checkbox" checked /> nur gemeldete</label>
+        <button id="btnEntSave">Speichern &amp; melden</button>
+      </div>
+      <div id="entTableWrap" class="tablewrap">
+        <table id="entTable">
+          <thead><tr>
+            <th>melden</th><th>Adresse</th><th>Typ</th><th>Name</th><th>Bereich</th>
+            <th>Laufzeit&nbsp;s</th><th>Zustand</th><th>Test</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <pre id="haLog" class="log"></pre>
+    </section>
+
+    <!-- ==================== EDITOR ==================== -->
+    <section id="tab-editor" class="tab">
+      <h2>Regelbasis</h2>
+      <div id="rbSummary" class="summary"></div>
+      <div class="row wrap toolbar">
+        <button id="btnReloadRb" class="secondary">Neu laden</button>
+        <label class="file">Import .hrb<input id="fileImport" type="file" accept=".hrb,application/octet-stream" hidden /></label>
+        <a id="btnExport" class="btn secondary" href="api/rulebase/export">Export .hrb</a>
+        <a id="btnExportRebuild" class="btn secondary" href="api/rulebase/export?rebuild=1">Export (rebuild ⊕)</a>
+        <a id="btnExportSrc" class="btn secondary" href="api/rulebase/source" target="_blank">Quelltext ansehen</a>
+        <button id="btnSave" class="secondary">Server-Save</button>
+        <span class="grow"></span>
+        <input id="ruleFilter" placeholder="Filter (Hex / Text)…" />
+      </div>
+
+      <div class="editor-split">
+        <div class="rules-pane">
+          <table id="rulesTable">
+            <thead><tr><th>#</th><th>Hex</th><th>Art</th><th>Operation</th><th>Quelltext (Parser-Syntax)</th><th>dst ← src</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <aside id="ruleEditor" class="rule-editor">
+          <h3>Regel bearbeiten</h3>
+          <div id="ruleEditBody" class="muted">Regel in der Tabelle auswählen…</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ==================== MONITOR ==================== -->
+    <section id="tab-monitor" class="tab">
+      <h2>Serieller Monitor</h2>
+      <div class="row wrap">
+        <input id="txHex" placeholder="Hex senden, z.B. AA 01 00 55" class="grow mono" />
+        <button id="btnSend">Senden</button>
+        <label class="check"><input id="autoscroll" type="checkbox" checked /> Autoscroll</label>
+        <button id="btnClearMon" class="secondary">Leeren</button>
+      </div>
+      <div class="row wrap toolbar">
+        <b class="small">HomeBus-Polling (Master):</b>
+        <button id="btnDiscover" class="secondary">Module suchen</button>
+        <button id="btnPollStart">Polling starten</button>
+        <button id="btnPollStop" class="secondary">Stop</button>
+        <label class="small" title="Zykluszeit: alle Module werden pro Zyklus in EINEM Burst gepollt (Original: ~110 ms).">
+          Zyklus <input id="pollInterval" type="number" min="20" max="1000" value="110" style="width:64px" /> ms</label>
+        <span id="pollInfo" class="muted small"></span>
+      </div>
+      <div class="row wrap toolbar">
+        <b class="small">Live-Automat (Eingang→Regel→Ausgang):</b>
+        <button id="btnAutomatStart">Automat starten</button>
+        <button id="btnAutomatStop" class="secondary">Stop</button>
+        <label class="check" title="Führt zusätzlich die 140 Zeitplan-Regeln aus – die Anlage schaltet dann selbständig nach Uhrzeit (z.B. Rolladen 9:30, Außenlicht 23:00). Timer (Rolladen-Laufzeit, Licht-Nachlauf) laufen unabhängig davon immer mit.">
+          <input id="cbTimebase" type="checkbox" /> Zeitplan (Uhrzeit-Regeln) aktiv</label>
+        <span id="automatInfo" class="muted small">nicht aktiv</span>
+      </div>
+      <div id="automat" class="monitor mono small" style="height:22vh"></div>
+      <div class="row wrap muted small">
+        <span>RX <b id="rxBytes">0</b> B</span>
+        <span>TX <b id="txBytes">0</b> B</span>
+        <span>Frames <b id="frameCount">0</b></span>
+        <span>Resyncs <b id="resyncs">0</b></span>
+        <span>Overruns <b id="overruns">0</b></span>
+        <label class="check"><input id="showFrames" type="checkbox" checked /> HomeBus-Frames anzeigen</label>
+      </div>
+      <div id="monitor" class="monitor mono"></div>
+    </section>
+
+    <!-- ==================== SIMULATOR ==================== -->
+    <section id="tab-simulator" class="tab">
+      <h2>Simulator</h2>
+      <div class="row wrap toolbar">
+        <span class="inject">Modul registrieren: addr <input id="regAddr" type="number" min="0" max="255" value="5" />
+          <button id="btnRegister" class="secondary">+</button></span>
+        <button id="btnRun1">Alle Regeln auswerten</button>
+        <button id="btnSimReset" class="secondary">Reset</button>
+        <span class="grow"></span>
+        <span class="inject">Zeitbasis:
+          <button id="btnTick" class="secondary">1 Tick</button>
+          <button id="btnTimeRun" class="secondary">Start</button>
+          <button id="btnTimeStop" class="secondary">Stop</button>
+          <span id="tbInfo" class="muted small"></span>
+        </span>
+      </div>
+      <div class="row wrap toolbar">
+        <span class="inject">Bit setzen: mod <input id="sbMod" type="number" min="0" max="255" value="5" />
+          sub <input id="sbSub" type="number" min="0" max="15" value="0" />
+          bit <input id="sbBit" type="number" min="0" max="7" value="0" />
+          <select id="sbVal"><option value="1">1</option><option value="0">0</option></select>
+          <button id="btnSetBit" class="secondary">→</button></span>
+        <span class="inject">Byte injizieren: mod <input id="injMod" type="number" min="0" max="255" value="5" />
+          sub <input id="injSub" type="number" min="0" max="15" value="0" />
+          val <input id="injVal" type="number" min="0" max="255" value="1" />
+          <button id="btnInject" class="secondary">→</button></span>
+      </div>
+      <div class="sim-grid">
+        <div>
+          <h3>Modulzustände (Byte-Werte)</h3>
+          <div id="modGrid" class="modgrid"></div>
+        </div>
+        <div>
+          <h3>Timer</h3>
+          <div id="timerView" class="timers"></div>
+          <h3>Ereignis-Log</h3>
+          <div id="simLog" class="monitor mono small"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+  <script type="module" src="automations.js"></script>
+  <script type="module" src="ha.js"></script>
+</body>
+</html>

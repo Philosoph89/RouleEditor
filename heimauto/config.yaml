@@ -1,0 +1,69 @@
+# Home Assistant Add-on: Heimauto HomeBus Bridge
+#
+# Startet die Heimauto-Webapp als Add-on, pollt den HomeBus über den
+# USB-Seriell-Adapter und meldet alle erkannten Entitäten per MQTT-Discovery an
+# Home Assistant.
+name: Heimauto HomeBus Bridge
+version: "1.0.0"
+slug: heimauto
+description: >-
+  HomeBus-Master (Protokoll V1.2): pollt die Module am RS-Bus, meldet Schalter,
+  Licht, Dimmer und Jalousien per MQTT-Discovery an Home Assistant und schaltet
+  die Ausgänge auf HA-Befehl. Enthält den kompletten RouleEditor-Web-Ersatz
+  (Regelbasis-Editor, Monitor, Simulator).
+url: https://github.com/
+codenotary: false
+init: false
+startup: services
+boot: auto
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+  - i386
+# Web-UI über Ingress (kein offener Port nötig)
+ingress: true
+ingress_port: 3000
+panel_icon: mdi:home-lightning-bolt
+panel_title: Heimauto
+panel_admin: true
+# optional zusätzlich direkt erreichbar machen: im Add-on-Konfig-Tab auf einen
+# Port setzen (Standard: aus)
+ports:
+  3000/tcp: null
+ports_description:
+  3000/tcp: Web-UI ohne Ingress (normalerweise nicht nötig)
+# Zugriff auf den USB-Seriell-Adapter
+uart: true
+usb: true
+udev: true
+# MQTT-Broker (Mosquitto-Add-on) automatisch übernehmen
+services:
+  - mqtt:want
+map:
+  - share:rw
+options:
+  serial_port: ""
+  baud_rate: 115200
+  mode: bridge
+  scan_start: "0x10"
+  scan_end: "0x4F"
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
+  mqtt_base: heimauto
+  discovery_prefix: homeassistant
+schema:
+  serial_port: str?
+  baud_rate: int(110,460800)
+  mode: list(bridge|rules|both)
+  scan_start: str
+  scan_end: str
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_user: str?
+  mqtt_password: password?
+  mqtt_base: str
+  discovery_prefix: str

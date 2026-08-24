@@ -1,0 +1,26 @@
+{
+  "name": "rouleeditor-web",
+  "version": "1.0.0",
+  "description": "Web reimplementation of RouleEditor V2.103 (HomeBus rule editor, simulator and serial console)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mqtt": "^5.15.2",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "serialport": "^12.0.0"
+  },
+  "devDependencies": {
+    "aedes": "^1.1.1"
+  }
+}
