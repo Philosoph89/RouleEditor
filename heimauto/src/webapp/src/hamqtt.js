@@ -13,7 +13,7 @@
 // groups them as "HomeBus Modul 1A" etc. The master itself is the via_device.
 
 import mqtt from 'mqtt';
-import { moduleDevice, DIM_LEVEL_MAX } from './entities.js';
+import { moduleDevice, areaHints, DIM_LEVEL_MAX } from './entities.js';
 
 const COMPONENT = {
   switch: 'switch',
@@ -43,6 +43,7 @@ export class HaMqtt {
     this.prefix = 'homeassistant';
     this.entities = [];
     this.overrides = {};
+    this.areaHints = {};
     this.onLog = null;
     this.stats = { published: 0, commands: 0, errors: 0, connectedAt: null };
     this.lastError = null;
@@ -142,6 +143,7 @@ export class HaMqtt {
   setEntities(list, overrides = {}) {
     this.entities = list;
     this.overrides = overrides;
+    this.areaHints = areaHints(list);
     if (this.connected) this.publishDiscovery();
   }
 
@@ -164,10 +166,9 @@ export class HaMqtt {
       availability_topic: `${this.base}/status`,
       payload_available: 'online',
       payload_not_available: 'offline',
-      device: moduleDevice(e.module, this.overrides),
+      device: moduleDevice(e.module, this.overrides, this.areaHints?.[e.module.toString(16).toUpperCase().padStart(2, '0')]),
       qos: 1,
     };
-    if (e.area) common.device.suggested_area = e.area;
 
     switch (e.kind) {
       case 'switch':

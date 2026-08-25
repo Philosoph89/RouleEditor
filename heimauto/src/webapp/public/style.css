@@ -243,3 +243,8 @@ code.big { font-size: 22px; font-weight: 600; letter-spacing: .5px; }
 #tabs button.has-news::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 6px;
   border-radius: 50%; background: #4fbf7b; vertical-align: middle; animation: newspulse 1.2s ease-in-out infinite; }
 @keyframes newspulse { 50% { opacity: .35; } }
+.tag.conn { background: rgba(90,140,220,.28); }
+.tag.new { background: rgba(226,179,65,.28); }
+#entTable input.guess { opacity: .7; font-style: italic; }
+.sheet { font-size: 12px; color: #a8b0bd; margin-top: 3px; }
+.sheet b { color: #7fa8e8; }

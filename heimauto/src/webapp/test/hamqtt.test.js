@@ -29,7 +29,10 @@ test('a relay becomes a switch/light with command and state topic', () => {
   assert.equal(cfg.state_topic, 'heimauto/light_1a_0_0/state');
   assert.equal(cfg.availability_topic, 'heimauto/status');
   assert.deepEqual(cfg.device.identifiers, ['heimauto_mod_1a']);
-  assert.equal(cfg.device.suggested_area, 'HWR');
+  // suggested_area sitzt bei MQTT am Gerät und wird nur gesetzt, wenn alle
+  // gemeldeten Entitäten des Moduls im selben Raum liegen. Modul 1A hat hier
+  // eine Entität ohne Raum (der Taster), also bleibt es leer.
+  assert.equal(cfg.device.suggested_area, undefined);
 });
 
 test('a cover gets position topics so HA can drive it to a percentage', () => {
@@ -56,6 +59,18 @@ test('an input is a binary_sensor with no command topic', () => {
   assert.equal(comp, 'binary_sensor');
   assert.equal(cfg.command_topic, undefined);
   assert.equal(cfg.state_topic, 'heimauto/input_1a_0_6/state');
+});
+
+test('ein eindeutiger Raum landet am Gerät, ein mehrdeutiger nicht', () => {
+  const bridge = new Bridge({ queueOutput: () => {} });
+  const ha = new HaMqtt(bridge);
+  // Modul 1A: beide Entitäten im HWR -> Raum am Gerät
+  const same = [{ ...ENT[0], area: 'HWR' }, { ...ENT[3], area: 'HWR' }];
+  ha.setEntities(same);
+  assert.equal(ha.discoveryConfig(same[0]).cfg.device.suggested_area, 'HWR');
+  // dasselbe Modul mit zwei Räumen -> kein Raum am Gerät
+  ha.setEntities([{ ...ENT[0], area: 'HWR' }, { ...ENT[3], area: 'Flur' }]);
+  assert.equal(ha.discoveryConfig(ENT[0]).cfg.device.suggested_area, undefined);
 });
 
 test('every module becomes its own Home Assistant device', () => {

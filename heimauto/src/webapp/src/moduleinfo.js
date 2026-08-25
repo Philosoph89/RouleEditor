@@ -65,17 +65,19 @@ export const SUB_ROLES = {
 export const LABEL_SEED = {
   'trigger:8': 'Zeit – jede Minute (Zeitschaltuhr)',
   '1C.0': 'Lüftung',
+  // Die Anschlussliste hat bei Modul 1B „mehr/weniger Luft" vertauscht: laut
+  // Regelbasis UND Original-Log ist Bit 7 „höher" (1C.0 += $11) und Bit 6
+  // „niedriger". Die Klarnamen hier halten die verifizierte Richtung fest.
   '1B.0.7': 'Lüftung Wohnzimmer – höher',
   '1B.0.6': 'Lüftung Wohnzimmer – niedriger',
   '31.0.1': 'Lüftung Flur OG – höher',
   '31.0.0': 'Lüftung Flur OG – niedriger',
   '1A': 'Hauswirtschaftsraum (HWR)',
-  '1A.0.0': 'HWR Licht (Relais)',
-  '1A.0.6': 'HWR Taster',
-  '41.0.5': 'Licht hinter Garage',
-  '40.0.4': 'Licht unter Carport',
-  '30.0.1': 'Zirkulationspumpe Warmwasser HWR unten',
 };
+// Alles andere kommt aus der Anschlussdokumentation (src/connections.data.js):
+// sie ist genauer als die früheren Einzelbelege aus dem Reverse-Engineering
+// (z. B. war „41.0.5 = Licht hinter Garage" das An/Aus-Merkerbit des Dimmers —
+// die Lampe selbst hängt an A41/4 „Lampe an Garage hinten zum Kompost").
 
 export function moduleInfo(addr, overrides = {}) {
   const key = (addr & 0xff).toString(16).toUpperCase().padStart(2, '0');

@@ -125,7 +125,8 @@ test('ein Ausgangsbyte mit mehreren Relais nennt jedes einzeln', () => {
   const out = describeOutputs([{ module: 0x40, sub: 0, value: 0x03 }], { entities, labels });
   const on = out[0].devices.filter((d) => d.on === true).map((d) => d.entity.id);
   const off = out[0].devices.filter((d) => d.on === false).map((d) => d.entity.id);
-  assert.deepEqual(on, ['switch_40_0_0', 'switch_40_0_1'], 'Bit 0 und 1 sind EIN');
+  // A40/0 und A40/1 sind laut Anschlussliste zwei Außenlampen -> light
+  assert.deepEqual(on, ['light_40_0_0', 'light_40_0_1'], 'Bit 0 und 1 sind EIN');
   assert.ok(off.length > 0 && !off.some((id) => on.includes(id)), 'die übrigen sind AUS');
 });
 

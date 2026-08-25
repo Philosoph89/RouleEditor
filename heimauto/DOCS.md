@@ -153,6 +153,29 @@ Der Verlauf (30 Einträge) lässt sich auf **nur unbenannte** filtern — so
 arbeitet man die Anlage Raum für Raum ab. Optional piept es bei jeder Erkennung,
 damit man beim Drücken nicht auf den Schirm schauen muss.
 
+### Anschlussdokumentation
+
+Die Namen, Geräteklassen und Räume kommen aus der Anschlussliste der Anlage
+(`docs/*.xlsx` → `src/connections.data.js`, neu erzeugen mit
+`node tools/gen-connections.mjs`). Daraus ergibt sich:
+
+* **Klarnamen** für praktisch jede Entität („Rolladen Erker mitte", „Steckdose
+  Staubsauger Eßecke", „Rauchmelder Gästezimmer").
+* **Geräteklassen**: Readkontakte werden `opening`, Rauchmelder `smoke`,
+  Bewegungsmelder `motion`, Sabotagekontakte `tamper`, Sonnenfühler `light`,
+  Paniktaster `safety`, Steckdosen `outlet`. Home Assistant zeigt damit die
+  richtigen Symbole und kann sie in Alarm-/Anwesenheitslogik verwenden.
+* **Räume** (16) aus dem Beschreibungstext — nicht aus dem Einbauort des Moduls,
+  der oft in einem anderen Raum sitzt. Fehlt ein Raum im Text, wird der
+  Einbauort als Vermutung eingetragen (in der Tabelle kursiv).
+* **143 Anschlüsse, die die alte Konfiguration nie benutzt** — drei Flurlichter
+  auf Modul 1A, ein Dutzend Steckdosen und die komplette Sensorik. Filter
+  „nur neue" in der Entitätenliste zeigt genau diese.
+
+Nicht gemeldet werden Verkabelungsnotizen („KABEL zur Verteilerdose") und die
+Lüftermotor-Relais — ein Lüftermotor wird über die Lüftungsstufe gefahren, nicht
+über Einzelrelais.
+
 ### Kuratieren
 
 Web-UI → Tab **Home Assistant**: Häkchen „melden", Typ korrigieren, Klarnamen

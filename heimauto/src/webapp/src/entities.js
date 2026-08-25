@@ -32,6 +32,7 @@
 import { decode } from './compiler.js';
 import { OPERATORS } from './instructionset.js';
 import { moduleInfo, moduleLabel, MODULE_TYPES } from './moduleinfo.js';
+import { buildConnectionIndex, coverName, classifyInput, classifyOutput, areaFor } from './connections.js';
 
 const hx2 = (n) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');
 
@@ -81,9 +82,17 @@ export function chains(rulebase) {
 
 // --- derivation -------------------------------------------------------------
 
-export function deriveEntities(rulebase, { labels = {}, modules = [], hardware = null } = {}) {
+export function deriveEntities(rulebase, { labels = {}, modules = [], hardware = null,
+                                           connections = null } = {}) {
   const known = new Set(modules.map((m) => m & 0xff));
   const cs = chains(rulebase);
+  // Anschlussdokumentation der Anlage: liefert Klarnamen, Geräteklassen und
+  // Räume für jede Klemme — und die Anschlüsse, die die alte Konfiguration nie
+  // benutzt hat (die werden unten als eigene Entitäten ergänzt).
+  const conn = connections === false ? null : buildConnectionIndex(connections || undefined);
+  const doc = (token, dir) => (conn ? conn.byAddr.get(token)?.[dir] || null : null);
+  // Name: eigener Klarname des Nutzers > Anschlussdokumentation > Platzhalter
+  const named = (token, dir, fallback) => labels[token] || doc(token, dir)?.desc || fallback;
 
   // 1. dimmer channels: a module addressed with the command byte M.4
   const dimmers = new Map();          // module -> { stateBits:Set, presets:Set }
@@ -136,6 +145,20 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
   }
   // pairs that only ever appear in stop chains are not covers
   for (const [k, v] of [...covers]) if (v.stopOnly) covers.delete(k);
+  // Die Anschlussliste korrigiert Fehltreffer: 15.0.2/15.0.3 werden von einer
+  // Zentral-Kette gemeinsam gelöscht UND es läuft ein Timer mit — sie sind aber
+  // laut Doku zwei Steckdosen ("Erkerfenster mitte", 16:30 ein / 22:30 aus).
+  // Sagt die Dokumentation für eines der beiden Bits etwas anderes als
+  // „Rolladen", ist es kein Rolladen.
+  if (conn) {
+    for (const k of [...covers.keys()]) {
+      const [mh, ss, bs] = k.split('.');
+      const b0 = conn.byAddr.get(`${mh}.${ss}.${bs}`)?.out;
+      const b1 = conn.byAddr.get(`${mh}.${ss}.${Number(bs) + 1}`)?.out;
+      const contradicts = (d) => d && classifyOutput(d.desc).kind !== 'cover';
+      if (contradicts(b0) || contradicts(b1)) covers.delete(k);
+    }
+  }
 
   const coverBits = new Set();
   for (const k of covers.keys()) {
@@ -283,6 +306,16 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
   // --- build the entity list ---
   const out = [];
   const label = (...keys) => { for (const k of keys) if (labels[k]) return labels[k]; return null; };
+  // Raum: aus dem Beschreibungstext des Anschlusses. Steht dort kein Raum, wird
+  // der EINBAUORT des Moduls als Vermutung genommen — er stimmt oft, aber nicht
+  // immer (Modul 10 sitzt im Gästezimmer, schaltet auch Speisekammer und Küche).
+  const areaOfDesc = (desc, module) => {
+    const a = areaFor(desc || '');
+    if (a) return { area: a, guess: false };
+    const room = conn?.rooms?.[hx2(module)];
+    const g = room ? areaFor(room) : null;
+    return g ? { area: g, guess: true } : { area: null, guess: false };
+  };
 
   for (const [key, cov] of [...covers].sort()) {
     const [mh, ss, bs] = key.split('.');
@@ -292,8 +325,13 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
       kind: 'cover', module: M, sub, bitDir, bitRun,
       travelSec: cov.travelSec || 30,
       timers: [...cov.timers],
-      name: label(`${mh}.${sub}.${bitDir}`, `cover:${mh}.${sub}.${bitDir}`)
+      name: labels[`${mh}.${sub}.${bitDir}`] || labels[`cover:${mh}.${sub}.${bitDir}`]
+            || (conn && coverName(conn, M, sub, bitDir, bitRun))
             || `Jalousie ${mh}.${sub}.${bitDir}`,
+      connector: doc(`${mh}.${sub}.${bitDir}`, 'out')?.connector || null,
+      sheet: doc(`${mh}.${sub}.${bitDir}`, 'out')?.desc || null,
+      ...(({ area, guess }) => ({ area, areaGuess: guess || undefined }))(
+        areaOfDesc(doc(`${mh}.${sub}.${bitDir}`, 'out')?.desc, M)),
       deviceClass: 'shutter',
       online: known.size === 0 || known.has(M),
       source: 'derived',
@@ -313,7 +351,12 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
       kind: 'dimmer', module: M,
       levelSub: DIM_LEVEL_SUB, cmdSub: DIM_CMD_SUB, levelMax: DIM_LEVEL_MAX,
       stateBit: stateBit === undefined ? null : stateBit,
-      name: label(`${mh}.dim`, `${mh}.${DIM_LEVEL_SUB}`) || `Dimmer ${mh}`,
+      name: labels[`${mh}.dim`] || labels[`${mh}.${DIM_LEVEL_SUB}`]
+            || cleanDesc(conn?.dimmers.get(mh)?.desc) || `Dimmer ${mh}`,
+      connector: conn?.dimmers.get(mh)?.connector || null,
+      sheet: conn?.dimmers.get(mh)?.desc || null,
+      ...(({ area, guess }) => ({ area, areaGuess: guess || undefined }))(
+        areaOfDesc(conn?.dimmers.get(mh)?.desc, M)),
       online: known.size === 0 || known.has(M),
       source: 'derived',
     });
@@ -325,7 +368,7 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
     const step = lv.step || 1;
     const steps = Math.floor((lv.max - lv.min) / step) + 1;
     if (steps < 2 || steps > 64) continue;   // ein Zähler ist kein Stufenschalter
-    const name = label(key) || `Stufenschalter ${key}`;
+    const name = labels[key] || `Stufenschalter ${key}`;
     // Ein Stufenregister, das nach Lüftung klingt, wird in Home Assistant ein
     // fan (Prozent-Slider); alles andere ein number (0..n).
     const isFan = /l[üu]ftung|ventilat|abluft|zuluft|fan|gebl[äa]se/i.test(name);
@@ -368,15 +411,27 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
     const dim = dimmers.get(M);
     if (dim && sub === 0 && dim.folded?.has(bit)) continue;   // dimmer state bit
     const flag = FLAG_SUBS.has(sub) || !PHYSICAL_SUBS.has(sub);
-    const name = label(key);
-    const isLight = /licht|lampe|leuchte|strahler|spot|beleucht/i.test(name || '');
+    // Sub 1 sind die Status-LEDs der Taster (durch die Anschlussliste belegt),
+    // Sub 7 die Merker der Regelbasis.
+    const d = doc(key, sub === 1 ? 'led' : 'out');
+    const name = labels[key] || cleanDesc(d?.desc);
+    const cls = d && sub !== 1 ? classifyOutput(d.desc) : {};
+    const isLight = cls.kind === 'light'
+      || /licht|lampe|leuchte|strahler|spot|beleucht/i.test(name || '');
+    const kind = isLight ? 'light' : 'switch';
     out.push({
-      id: `${isLight ? 'light' : 'switch'}_${mh.toLowerCase()}_${sub}_${bit}`,
-      kind: isLight ? 'light' : 'switch',
+      id: `${kind}_${mh.toLowerCase()}_${sub}_${bit}`,
+      kind,
       module: M, sub, bit, count,
-      name: name || `${isLight ? 'Licht' : 'Schalter'} ${key}`,
+      name: name || `${sub === 1 ? 'Status-LED' : isLight ? 'Licht' : 'Schalter'} ${key}`,
+      deviceClass: cls.deviceClass || undefined,
+      connector: d?.connector || null,
+      sheet: d?.desc || null,
+      ...(({ area, guess }) => ({ area, areaGuess: guess || undefined }))(areaOfDesc(d?.desc, M)),
+      undocumented: d ? undefined : true,
       online: known.size === 0 || known.has(M),
-      internal: flag,                 // rule-base flag bit, not a physical output
+      internal: flag,                 // rule-base flag bit / Status-LED
+      statusLed: sub === 1 || undefined,
       source: 'derived',
     });
   }
@@ -384,13 +439,98 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
   for (const [key, count] of [...inputs].sort()) {
     const [mh, ss, bs] = key.split('.');
     const M = parseInt(mh, 16), sub = Number(ss), bit = Number(bs);
+    const d = doc(key, 'in');
+    const cls = d ? classifyInput(d.desc) : {};
     out.push({
       id: `input_${mh.toLowerCase()}_${sub}_${bit}`,
       kind: 'button', module: M, sub, bit, count,
-      name: label(key) || `Taster ${key}`,
+      name: labels[key] || cleanDesc(d?.desc) || `Taster ${key}`,
+      deviceClass: cls.deviceClass || undefined,
+      connector: d?.connector || null,
+      sheet: d?.desc || null,
+      ...(({ area, guess }) => ({ area, areaGuess: guess || undefined }))(areaOfDesc(d?.desc, M)),
+      undocumented: d ? undefined : true,
       online: known.size === 0 || known.has(M),
       source: 'derived',
     });
+  }
+
+  // --- Anschlüsse, die die Regelbasis nie benutzt -----------------------------
+  // Die Anschlussliste dokumentiert deutlich mehr als die alte Konfiguration
+  // schaltet: drei Flurlichter auf Modul 1A, ein Dutzend Steckdosen und vor
+  // allem die Sensorik (Fensterkontakte, Rauchmelder, Sonnenfühler,
+  // Sabotagekontakte). Genau das will man in Home Assistant haben.
+  if (conn) {
+    const has = new Set(out.map((e) => e.id));
+    // Bytes, die einem Stufenregister gehören (die 8 Lüfterrelais von 1C), und
+    // die Lüftermotor-Ansteuerung dürfen nicht als Einzelschalter erscheinen.
+    const levelBytes = new Set(out.filter((e) => e.kind === 'level' || e.kind === 'fan')
+                                  .map((e) => `${hx2(e.module)}.${e.sub}`));
+    for (const [token, dirs] of conn.byAddr) {
+      const [mh, ss, bs] = token.split('.');
+      const M = parseInt(mh, 16), sub = Number(ss), bit = Number(bs);
+      const area = (desc) => (({ area, guess }) => ({ area, areaGuess: guess || undefined }))(areaOfDesc(desc, M));
+
+      const o = dirs.out;
+      if (o && !levelBytes.has(`${mh}.${sub}`)) {
+        const cls = classifyOutput(o.desc);
+        // "Rolladen" ohne Regelbasis-Paar: einzelnes Relais, kein Cover — ohne
+        // Laufzeit aus der Regelbasis wäre eine Positionsschätzung geraten.
+        const kind = cls.kind === 'cover' ? 'switch' : cls.kind;
+        const id = `${kind}_${mh.toLowerCase()}_${sub}_${bit}`;
+        if (!has.has(id) && !has.has(`switch_${mh.toLowerCase()}_${sub}_${bit}`)
+            && !has.has(`light_${mh.toLowerCase()}_${sub}_${bit}`)) {
+          out.push({
+            id, kind, module: M, sub, bit,
+            name: labels[token] || cleanDesc(o.desc),
+            deviceClass: cls.deviceClass || undefined,
+            connector: o.connector, sheet: o.desc, ...area(o.desc),
+            // Verkabelungsnotizen und die Lüftermotor-Relais werden angelegt,
+            // aber nicht ungefragt gemeldet.
+            enabled: !(o.wiring || o.fanDrive),
+            wiring: o.wiring || undefined, fanDrive: o.fanDrive || undefined,
+            unusedByRules: true,
+            online: known.size === 0 || known.has(M),
+            source: 'sheet',
+          });
+          has.add(id);
+        }
+      }
+
+      const i = dirs.in;
+      if (i) {
+        const id = `input_${mh.toLowerCase()}_${sub}_${bit}`;
+        if (!has.has(id)) {
+          const cls = classifyInput(i.desc);
+          out.push({
+            id, kind: 'button', module: M, sub, bit,
+            name: labels[token] || cleanDesc(i.desc),
+            deviceClass: cls.deviceClass || undefined,
+            connector: i.connector, sheet: i.desc, ...area(i.desc),
+            enabled: true, unusedByRules: true,
+            online: known.size === 0 || known.has(M),
+            source: 'sheet',
+          });
+          has.add(id);
+        }
+      }
+
+      const l = dirs.led;
+      if (l) {
+        const id = `switch_${mh.toLowerCase()}_${sub}_${bit}`;
+        if (!has.has(id)) {
+          out.push({
+            id, kind: 'switch', module: M, sub, bit,
+            name: labels[token] || cleanDesc(l.desc),
+            connector: l.connector, sheet: l.desc, ...area(l.desc),
+            internal: true, statusLed: true, enabled: false, unusedByRules: true,
+            online: known.size === 0 || known.has(M),
+            source: 'sheet',
+          });
+          has.add(id);
+        }
+      }
+    }
   }
 
   return out;
@@ -399,7 +539,23 @@ export function deriveEntities(rulebase, { labels = {}, modules = [], hardware =
 // Merge derived entities with the user's overrides (data/entities.json).
 // An override may change name/kind/area/deviceClass/travelSec/enabled and may
 // add entities that the rule base does not mention.
-const KIND_NAME = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter', button: 'Taster' };
+const KIND_NAME = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter',
+                    button: 'Taster', fan: 'Lüftung', level: 'Stufenschalter' };
+
+// Die Dokumentation schreibt Markierungen wie "[Dimmer]" oder Kabelnotizen mit
+// in den Text; für einen Entitätsnamen wird das gekürzt.
+export function cleanDesc(desc) {
+  if (!desc) return null;
+  let s = String(desc)
+    .replace(/\s*\[Dimmer\]\s*/gi, ' ')
+    .replace(/^Dimmausgang\s+/i, '')
+    .replace(/^Dimmer\s+/i, '')
+    .replace(/^Rolladenausgang\s+/i, 'Rolladen ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (s.length > 80) s = s.slice(0, 77).replace(/\s\S*$/, '') + '…';
+  return s || null;
+}
 
 export function mergeOverrides(derived, overrides = {}, { labels = {} } = {}) {
   const byId = new Map(derived.map((e) => [e.id, { ...e }]));
@@ -429,7 +585,25 @@ function areaOf(e, overrides) {
   return (overrides.areas && overrides.areas[mh]) || null;
 }
 
-export function moduleDevice(module, overrides = {}) {
+// areaHint wird nur gesetzt, wenn ALLE gemeldeten Entitäten des Moduls im
+// selben Raum sitzen. MQTT-Discovery kennt `suggested_area` nur am Gerät, und
+// ein Modul schaltet oft in mehrere Räume (Modul 11: Rolladen Speisekammer,
+// Dimmer Küche) — dann gewinnt sonst willkürlich die zuletzt gesendete Entität.
+export function areaHints(entities) {
+  const byModule = new Map();
+  for (const e of entities) {
+    if (e.enabled === false) continue;
+    const k = hx2(e.module);
+    const cur = byModule.get(k);
+    if (cur === undefined) byModule.set(k, e.area || null);
+    else if (cur !== (e.area || null)) byModule.set(k, false);   // mehrdeutig
+  }
+  const out = {};
+  for (const [k, v] of byModule) if (v) out[k] = v;
+  return out;
+}
+
+export function moduleDevice(module, overrides = {}, areaHint = null) {
   const mh = hx2(module);
   const info = moduleInfo(module, overrides.hardware || {});
   return {
@@ -440,6 +614,7 @@ export function moduleDevice(module, overrides = {}) {
     // stammt aus dem ModulListe-Tab des Originals, siehe src/moduleinfo.js.
     model: info ? `HomeBus-${info.type} ${info.version}` : 'HomeBus I/O-Modul',
     sw_version: info?.date || undefined,
+    suggested_area: areaHint || undefined,
     via_device: 'heimauto_master',
   };
 }

@@ -317,3 +317,48 @@ und zwei **Original-Logs** ("Lüftung oben/unten 15x hoch und 15x runter").
 Änderungsmeldung „Modul MM, Sub S hat einen neuen Wert" (`AddChgMsg`) — direkt
 danach stehen genau diese `Tx-Data: (MM.S) <- VV`-Zeilen. Das bestätigt das
 Änderungsflag-Modell aus Stufe 2/3 an einer zweiten, unabhängigen Stelle.
+
+### Anschlussdokumentation eingearbeitet (2026-08-25)
+
+Zwei Tabellen des Nutzers (`docs/Modulbelegung_Gesamt.xlsx`,
+`docs/Gesamtuebersicht_Modulanschluesse_1A_bis_44_v3.xlsx`) beschreiben **jede
+Klemme** der Anlage. `node tools/gen-connections.mjs` erzeugt daraus
+`src/connections.data.js` (25 Module, 391 belegte Anschlüsse).
+
+**Die Zuordnung Klemme → Busadresse** ist der Kern und mehrfach belegt:
+
+| Klemme | Adresse | Beleg |
+|--------|---------|-------|
+| `A x/n` Ausgang | Sub 0, Bit n | `A1A/0` = „HWR Deckenlampe" — genau das Relais, das live mit `E5 1A 00 01 01` geschaltet wurde |
+| `A x/n` mit „Dimmer" | Dimmerkanal `M.3`/`M.4` | 17 dokumentierte Dimmerkanäle = genau die 17 Dimmer-Module der ModulListe |
+| `S x/n` Status-LED | Sub 1, Bit n | `S31/0…7` = „1.…8. LED Lüftungsanzeige Flur oben" = genau die 8 Bits der Stufen-LED-Tabelle; ebenso `S10/2`, `S11/2`, `S13/2`, `S15/2`, `S18/2`, `S19/2`, `S1B/0`, `S1B/2` = „1.…8. Ausgang Anzeige Lüftung im Wohnzimmer" |
+| `E x/n`, n ≤ 7 | Sub 0, Bit n | `E1A/6` = „HWR Lichtschalter" = Auslöser `0xD06` |
+| `E x/n`, n ≥ 8 | Sub 2, Bit n−8 | `E10/10`/`E10/11` = zweiter Rolladentaster „an Tür auf/zu" = Auslöser `10.2.2`/`10.2.3`; `E30/9` → `30.2.1`, `E30/11` → `30.2.3` |
+| `B/V/Z/P` | — | Bus-, Versorgungs-, 12-V-, Programmierleitungen, keine Entitäten |
+
+Gegenprobe: von allen Auslösern der Regelbasis auf Sub 0/2 haben bis auf zwei
+(„Zusatzbelegungen") alle eine Klemme in der Liste.
+
+| Ergebnis | Status | Detail |
+|----------|--------|--------|
+| **Klarnamen für 421 von 431 Entitäten** | ✅ | „Rolladen Erker mitte", „Steckdose Staubsauger Eßecke", „Rauchmelder Gästezimmer" statt `Schalter 14.0.0` |
+| **Geräteklassen aus dem Beschreibungstext** | ✅ | 25 × `opening` (Read­kontakte), 12 × `tamper`, 12 × `light` (Sonnenfühler), 5 × `smoke`, 5 × `motion`, 3 × `safety` (Paniktaster), 26 × `outlet` |
+| **Räume (16) aus dem Text**, nicht aus dem Einbauort | ✅ | Modul 11 sitzt im Gästezimmer, sein Rolladen gehört zur Speisekammer, sein Dimmer zur Küche. Fehlt ein Raum im Text, wird der Einbauort als *Vermutung* markiert |
+| `suggested_area` nur bei eindeutigem Modul | ✅ | MQTT kennt den Raum nur am Gerät; bei mehreren Räumen bleibt er leer, statt willkürlich den letzten zu nehmen |
+| **143 Anschlüsse ergänzt, die die alte Konfiguration nie benutzt** | ✅ | u. a. drei Flurlichter auf Modul 1A, ein Dutzend Steckdosen und die komplette Sensorik (Fensterkontakte, Rauchmelder, Sonnenfühler) |
+| Verkabelungsnotizen und Lüftermotor-Relais **nicht** gemeldet | ✅ | „KABEL zur Verteilerdose", „Strom aus 43/4", `A1B/0…7` „Lüftermotoransteuerung" → angelegt, aber abgeschaltet; die 8 Relais von `1C.0` erscheinen gar nicht einzeln (sie sind die Lüftungsstufe) |
+| **Fehltreffer der Regel-Ableitung korrigiert** | ✅ | `15.0.2`/`15.0.3` sahen wie ein Rolladen aus (eine Zentral-Kette löscht sie gemeinsam samt Timer) — laut Liste sind es zwei Steckdosen „Erkerfenster mitte" (Zeitschaltuhr 16:30 ein / 22:30 aus). Jetzt 19 statt 20 Rolladen |
+| Gemeldet an Home Assistant | ✅ | 335 Entitäten: 19 `cover`, 197 `binary_sensor`, 41 `light`, 77 `switch`, 1 `fan`, 1 `number`, 2 Diagnose-`sensor` |
+
+**Zwei Widersprüche in der Dokumentation, aufgelöst:**
+* Modul 1B: die Liste sagt `E1B/6` = „mehr Luft", `E1B/7` = „weniger Luft" —
+  Regelbasis *und* Original-Log sagen das Gegenteil (Bit 7 macht `1C.0 += $11`).
+  Die Klarnamen halten die verifizierte Richtung fest (`LABEL_SEED`).
+* Die frühere Zuordnung „41.0.5 = Licht hinter Garage" war das An/Aus-Merkerbit
+  des Dimmers; die Lampe hängt an `A41/4` „Lampe an Garage hinten zum Kompost".
+* In der zweiten Tabelle steht Modul 1A durchgehend als „nicht belegt", in der
+  ersten mit vier Ausgängen und acht Eingängen. Die erste stimmt (live geprüft).
+
+Die zweite Tabelle führt zusätzlich ein **Modul 1D** mit generischen Einträgen
+(„Ausgang", „Eingang"). Es antwortet nicht auf dem Bus und steht nicht in der
+ModulListe — es wird deshalb übersprungen.

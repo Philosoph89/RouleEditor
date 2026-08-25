@@ -87,6 +87,8 @@ webapp/
     hamqtt.js            MQTT-Discovery + Kommando-Abonnements für Home Assistant
     identify.js          Live-Zuordnung: Eingangsadresse → Name, Entität, Regelketten, Ausgangsgeräte
     moduleinfo.js        Hardware-Inventar (Typ/Version je Modul) + belegte Klarnamen + Rollen der Sub-Bytes
+    connections.js       Klemme -> Busadresse, Geräteklasse, Raum
+    connections.data.js  GENERIERT aus docs/*.xlsx (tools/gen-connections.mjs)
     simulator.js         Zustandsmodell (48×16 Module, ST/LT/DT) + Regel-Engine
   public/                index.html · style.css · app.js (Vanilla-ES-Module, kein Build)
   test/hrb.test.js       node:test, prüft Round-Trip & Prüfsumme

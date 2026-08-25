@@ -59,25 +59,32 @@ function render() {
   const q = ($('#entSearch')?.value || '').toLowerCase().trim();
   const kind = $('#entKind')?.value || '';
   const onlyEnabled = $('#entOnlyEnabled')?.checked;
+  const onlyNew = $('#entOnlyNew')?.checked;
   const rows = ENT.filter((e) => {
     if (kind && e.kind !== kind) return false;
     if (onlyEnabled && e.enabled === false) return false;
+    if (onlyNew && !e.unusedByRules) return false;
     if (!q) return true;
-    return (`${e.name} ${e.id} ${addr(e)} ${KIND_LABEL[e.kind] || e.kind} ${e.area || ''}`).toLowerCase().includes(q);
+    // auch die Klemmenbezeichnung und der Doku-Text sind durchsuchbar
+    return (`${e.name} ${e.id} ${addr(e)} ${KIND_LABEL[e.kind] || e.kind} ${e.area || ''} ${e.connector || ''} ${e.sheet || ''}`)
+      .toLowerCase().includes(q);
   });
   $('#entCount').textContent = `— ${ENT.filter((e) => e.enabled !== false).length} gemeldet von ${ENT.length} erkannt`;
   $('#entTable tbody').innerHTML = rows.map((e) => `
     <tr data-id="${e.id}" class="${e.enabled === false ? 'off' : ''}">
       <td><input type="checkbox" data-f="enabled" ${e.enabled === false ? '' : 'checked'} /></td>
       <td><code>${addr(e)}</code>
+        ${e.connector ? `<span class="tag conn" title="${esc(e.sheet || '')}">${esc(e.connector)}</span>` : ''}
         ${e.hardware ? `<span class="tag" title="${esc(e.hardware.type)} ${esc(e.hardware.version)}, Stand ${esc(e.hardware.date)}">${esc(e.hardware.type)}</span>` : ''}
+        ${e.unusedByRules ? ' <span class="tag new" title="Aus der Anschlussliste — die alte Konfiguration benutzt diesen Anschluss nicht">neu</span>' : ''}
+        ${e.undocumented ? ' <span class="tag warn" title="In der Regelbasis benutzt, aber in der Anschlussliste nicht dokumentiert">undokumentiert</span>' : ''}
         ${e.sub === 1 ? ' <span class="tag" title="Sub 1 sind die Status-LEDs der Taster">LED</span>' : ''}
         ${e.internal && e.sub !== 1 ? ' <span class="tag" title="Merker der Regelbasis, kein physischer Ausgang">Merker</span>' : ''}
         ${e.hardwareOnly ? ' <span class="tag" title="Laut Hardware vorhanden, von der alten Konfiguration nicht genutzt">ungenutzt</span>' : ''}
         ${e.online === false ? ' <span class="tag warn" title="Modul antwortet nicht">offline</span>' : ''}</td>
       <td><select data-f="kind">${KINDS.map((k) => `<option value="${k}" ${k === e.kind ? 'selected' : ''}>${KIND_LABEL[k]}</option>`).join('')}</select></td>
       <td><input data-f="name" value="${esc(e.name)}" /></td>
-      <td><input data-f="area" value="${esc(e.area || '')}" placeholder="z. B. Küche" /></td>
+      <td><input data-f="area" value="${esc(e.area || '')}" placeholder="z. B. Küche" class="${e.areaGuess ? 'guess' : ''}" title="${e.areaGuess ? 'geschätzt aus dem Einbauort des Moduls' : ''}" /></td>
       <td>${e.kind === 'cover' ? `<input data-f="travelSec" type="number" min="1" max="300" value="${e.travelSec || 30}" class="tiny" />`
             : (e.kind === 'fan' || e.kind === 'level') ? `<span class="muted small">${e.steps} Stufen</span>` : ''}</td>
       <td class="st">${esc(stateText(e))}</td>
@@ -115,6 +122,7 @@ function logLine(msg) {
 $('#entSearch')?.addEventListener('input', render);
 $('#entKind')?.addEventListener('change', render);
 $('#entOnlyEnabled')?.addEventListener('change', render);
+$('#entOnlyNew')?.addEventListener('change', render);
 
 $('#entTable')?.addEventListener('change', (ev) => {
   const tr = ev.target.closest('tr');

@@ -16,7 +16,8 @@ const api = async (url, opts) => {
 };
 const J = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-const KIND_LABEL = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter', button: 'Taster' };
+const KIND_LABEL = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter',
+                     button: 'Taster', fan: 'Lüftung', level: 'Stufenschalter' };
 const HIST_MAX = 30;
 
 let history = [];
@@ -98,7 +99,8 @@ function cardHtml(ev) {
         <h3>Entität</h3>
         ${ev.entity
           ? `<div>${devHtml({ token: ev.token, entity: ev.entity })}</div>
-             <div class="muted small">ID <code>${esc(ev.entity.id)}</code>${ev.entity.source === 'manual' ? ' · von Hand angelegt' : ''}${ev.entity.enabled === false ? ' — wird an Home Assistant <b>nicht</b> gemeldet' : ''}</div>`
+             ${ev.entity.connector ? `<div class="sheet"><b>${esc(ev.entity.connector)}</b> ${esc(ev.entity.sheet || '')}</div>` : ''}
+             <div class="muted small">ID <code>${esc(ev.entity.id)}</code>${ev.entity.area ? ' · ' + esc(ev.entity.area) : ''}${ev.entity.source === 'manual' ? ' · von Hand angelegt' : ''}${ev.entity.enabled === false ? ' — wird an Home Assistant <b>nicht</b> gemeldet' : ''}</div>`
           : `<div class="muted">Noch keine Entität: diese Adresse kommt in der Regelbasis nicht als Auslöser vor.
               Name eintragen und „an HA melden" angehakt lassen — dann wird daraus ein <code>binary_sensor</code>.</div>`}
       </div>
@@ -136,6 +138,7 @@ function histHtml(ev) {
     <span class="hist-badge ${ev.pressed ? 'on' : 'off'}">${ev.pressed ? '▼' : '▲'}</span>
     <code>${esc(ev.token)}</code>
     <span class="hist-name">${name ? esc(name) : '<i class="muted">unbenannt</i>'}</span>
+    ${ev.entity?.connector ? `<span class="muted small">${esc(ev.entity.connector)}</span>` : ''}
     <span class="muted small">${ev.source === 'regel' ? '⚙ Regel' : ''} ${outNames.length ? '→ ' + esc(outNames.join(', ')) : ''}</span>
   </div>`;
 }

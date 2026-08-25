@@ -76,6 +76,8 @@ export function entityForInput(entities, module, sub, bit) {
 }
 
 const brief = (e) => (e ? { id: e.id, name: e.name, kind: e.kind, area: e.area || null,
+                            connector: e.connector || null, sheet: e.sheet || null,
+                            deviceClass: e.deviceClass || null,
                             enabled: e.enabled !== false } : null);
 
 // Alles, was über eine Eingangsadresse bekannt ist.
