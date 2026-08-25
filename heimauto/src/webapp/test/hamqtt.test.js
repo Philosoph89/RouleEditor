@@ -112,3 +112,30 @@ test('foreign topics are ignored', () => {
   ha._onMessage('heimauto/light_1a_0_0/state', Buffer.from('ON'));
   assert.equal(called, 0);
 });
+
+// Regression: ein einzelner unbrauchbarer Datensatz beendete beim Discovery den
+// ganzen Prozess (uncaughtException im MQTT-connect-Callback).
+test('ein Datensatz ohne Modul kostet nur diese Entität', () => {
+  const bridge = new Bridge({ queueOutput: () => {} });
+  const ha = new HaMqtt(bridge);
+  const broken = { id: 'kaputt', kind: 'switch', name: 'ohne Adresse' };   // kein module
+  ha.setEntities([...ENT, broken]);
+  assert.equal(ha.discoveryConfig(broken), null, 'kein Wurf, sondern null');
+  assert.ok(ha.discoveryConfig(ENT[0]), 'die gesunden Entitäten gehen weiter');
+  // publishDiscovery zählt sie als übersprungen statt zu werfen
+  const logs = [];
+  ha.onLog = (m) => logs.push(m);
+  let published = 0;
+  ha.client = { connected: true, publish: () => { published++; } };
+  const n = ha.publishDiscovery();
+  assert.equal(n, ENT.length);
+  assert.match(logs.join(' '), /übersprungen/);
+  ha.client = null;
+});
+
+test('die Bridge nimmt nicht adressierbare Entitäten nicht an', () => {
+  const bridge = new Bridge({ queueOutput: () => {} });
+  bridge.setEntities([...ENT, { id: 'kaputt', kind: 'switch', name: 'x' }]);
+  assert.deepEqual(bridge.invalid, ['kaputt']);
+  assert.throws(() => bridge.command('kaputt', 'ON'), /unknown entity/);
+});

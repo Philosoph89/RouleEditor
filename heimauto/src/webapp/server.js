@@ -136,6 +136,20 @@ function rebuildEntities() {
   entities = mergeOverrides(
     deriveEntities(rulebase, { labels, modules: discoveredModules, hardware: entityOverrides.hardware }),
     entityOverrides, { labels });
+  // Die Ableitung wird besser, dabei ändern sich Entitäts-IDs. Kuratierte
+  // Overrides ziehen dann mit; was sich nicht zuordnen lässt, wird verworfen.
+  // Beides wird gemeldet, damit es nicht unbemerkt passiert.
+  if (entities.migrations?.length) {
+    console.log('[entities] Overrides umgezogen:',
+                entities.migrations.map((x) => `${x.from} -> ${x.to}`).join(', '));
+    broadcast({ type: 'ha-log', t: Date.now(),
+                msg: `${entities.migrations.length} kuratierte Einträge auf neue Entitäts-IDs umgezogen` });
+  }
+  if (entities.dropped?.length) {
+    console.warn('[entities] Overrides ohne Adresse verworfen:', entities.dropped.join(', '));
+    broadcast({ type: 'ha-log', t: Date.now(),
+                msg: `${entities.dropped.length} Override(s) ohne Adresse verworfen: ${entities.dropped.join(', ')}` });
+  }
   bridge.setEntities(entities);
   ha.setEntities(entities, entityOverrides);
   publishSystem();
@@ -925,6 +939,19 @@ server.listen(PORT, () => {
   console.log(`RouleEditor Web running at http://localhost:${PORT}`);
   console.log(`serialport native module: ${serial.status().serialportAvailable ? 'available' : 'MOCK only'}`);
   autostart().catch((e) => console.warn('[autostart]', e.message));
+});
+
+// Letzte Reißleine. Das Add-on ist die Steuerung des Hauses: ein Fehler in einem
+// asynchronen Callback (MQTT, seriell, Timer) darf nicht den ganzen Prozess und
+// damit Polling und Bus beenden. Der Fehler wird laut protokolliert — sichtbar im
+// Add-on-Log und im Home-Assistant-Tab — und der Betrieb läuft weiter.
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] unbehandelte Ausnahme:', err?.stack || err);
+  try { broadcast({ type: 'ha-log', t: Date.now(), msg: 'Unbehandelte Ausnahme: ' + (err?.message || err) }); } catch { /* ignore */ }
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[fatal] unbehandelte Promise-Ablehnung:', err?.stack || err);
+  try { broadcast({ type: 'ha-log', t: Date.now(), msg: 'Unbehandelte Ablehnung: ' + (err?.message || err) }); } catch { /* ignore */ }
 });
 
 process.on('SIGTERM', async () => {

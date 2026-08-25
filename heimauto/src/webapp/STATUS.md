@@ -362,3 +362,29 @@ Gegenprobe: von allen Auslösern der Regelbasis auf Sub 0/2 haben bis auf zwei
 Die zweite Tabelle führt zusätzlich ein **Modul 1D** mit generischen Einträgen
 („Ausgang", „Eingang"). Es antwortet nicht auf dem Bus und steht nicht in der
 ModulListe — es wird deshalb übersprungen.
+
+### Absturz im Add-on behoben (2026-08-25)
+
+Symptom: das Add-on startete durch (Port, 25 Module, Polling, MQTT verbunden)
+und beendete sich dann beim Discovery mit
+`TypeError: Cannot read properties of undefined (reading 'toString')`.
+
+Ursache: in `/data/entities.json` standen kuratierte Entitäts-IDs aus einer
+älteren Ableitung. Mit der Anschlussliste wurde aus `switch_40_0_0` ein
+`light_40_0_0` („Lampe vor Garage") und `cover_15_0_2` verschwand ganz
+(zwei Steckdosen). `mergeOverrides` machte aus solchen verwaisten Einträgen
+Entitäten **ohne Modul** — und `moduleDevice(e.module …)` warf im
+MQTT-`connect`-Callback, also als uncaughtException, die den Prozess beendete.
+
+| Behoben | Wie |
+|---------|-----|
+| Verwaiste Overrides | `parseEntityId()` liest die Adresse aus der ID und zieht Name/Raum/Typ/„melden" auf die neue Entität um (`migrations`) |
+| Nicht zuordenbare Einträge | werden verworfen (`dropped`) statt als kaputte Entität durchgelassen; beides wird geloggt und im HA-Tab gemeldet |
+| Discovery | je Entität abgesichert: ein unbrauchbarer Datensatz kostet diese eine Entität |
+| MQTT-Callbacks | `connect` und `message` gekapselt — dort ist eine Ausnahme sonst automatisch fatal |
+| Bridge | nimmt nicht adressierbare Entitäten nicht an (kein NaN im Ausgangsframe) |
+| Prozess | `uncaughtException`/`unhandledRejection` protokollieren laut, beenden aber nicht mehr die Haussteuerung |
+
+Nachgestellt mit genau dieser `entities.json`: Umzug protokolliert, ein Eintrag
+verworfen, 335 Entitäten gemeldet, Server läuft, kuratierter Name erhalten.
+Regressionen in `test/entities.test.js` und `test/hamqtt.test.js`.

@@ -92,17 +92,28 @@ export class HaMqtt {
       will: { topic: `${this.base}/status`, payload: 'offline', qos: 1, retain: true },
     });
 
+    // Alles in diesem Handler läuft in einem MQTT-Callback: eine Ausnahme hier
+    // ist ein uncaughtException und beendet das Add-on. Deshalb abgesichert.
     this.client.on('connect', () => {
-      this.stats.connectedAt = Date.now();
-      this.log(`MQTT verbunden: ${url}`);
-      this.client.publish(`${this.base}/status`, 'online', { qos: 1, retain: true });
-      this.client.subscribe([`${this.base}/+/set`, `${this.base}/+/set_position`,
-                            `${this.base}/+/set_percentage`,
-                            `${this.prefix}/status`], { qos: 1 });
-      this.publishDiscovery();
-      this.bridge.publishAll();
+      try {
+        this.stats.connectedAt = Date.now();
+        this.log(`MQTT verbunden: ${url}`);
+        this.client.publish(`${this.base}/status`, 'online', { qos: 1, retain: true });
+        this.client.subscribe([`${this.base}/+/set`, `${this.base}/+/set_position`,
+                              `${this.base}/+/set_percentage`,
+                              `${this.prefix}/status`], { qos: 1 });
+        this.publishDiscovery();
+        this.bridge.publishAll();
+      } catch (err) {
+        this.stats.errors++;
+        this.lastError = err.message;
+        this.log('Fehler beim Anmelden der Entitäten: ' + err.message);
+      }
     });
-    this.client.on('message', (topic, payload) => this._onMessage(topic, payload));
+    this.client.on('message', (topic, payload) => {
+      try { this._onMessage(topic, payload); }
+      catch (err) { this.stats.errors++; this.log('Fehler bei MQTT-Nachricht: ' + err.message); }
+    });
     this.client.on('error', (err) => { this.lastError = err.message; this.stats.errors++; this.log('MQTT-Fehler: ' + err.message); });
     this.client.on('close', () => this.log('MQTT-Verbindung geschlossen'));
 
@@ -156,9 +167,13 @@ export class HaMqtt {
   }
 
   discoveryConfig(e) {
-    const t = this.topics(e);
     const comp = COMPONENT[e.kind];
     if (!comp) return null;
+    // Ohne Modul ist die Entität nicht adressierbar. Das darf hier nicht mehr
+    // vorkommen (mergeOverrides fängt es ab), aber ein einzelner kaputter
+    // Datensatz darf niemals das Add-on beenden.
+    if (!Number.isInteger(e.module)) return null;
+    const t = this.topics(e);
     const common = {
       name: e.name,
       unique_id: `heimauto_${e.id}`,
@@ -208,18 +223,27 @@ export class HaMqtt {
   publishDiscovery() {
     if (!this.connected) return 0;
     let n = 0;
+    const skipped = [];
     for (const e of this.entities) {
-      const d = this.discoveryConfig(e);
-      if (!d) continue;
-      const topic = `${this.prefix}/${d.comp}/heimauto/${e.id}/config`;
-      if (e.enabled === false) {
-        this.client.publish(topic, '', { qos: 1, retain: true });   // remove
-        continue;
+      // Je Entität abgesichert: ein unbrauchbarer Datensatz kostet diese eine
+      // Entität, nicht die Verbindung und nicht den Prozess.
+      try {
+        const d = this.discoveryConfig(e);
+        if (!d) { skipped.push(e?.id || '?'); continue; }
+        const topic = `${this.prefix}/${d.comp}/heimauto/${e.id}/config`;
+        if (e.enabled === false) {
+          this.client.publish(topic, '', { qos: 1, retain: true });   // remove
+          continue;
+        }
+        this.client.publish(topic, JSON.stringify(d.cfg), { qos: 1, retain: true });
+        n++;
+      } catch (err) {
+        skipped.push(`${e?.id || '?'} (${err.message})`);
+        this.stats.errors++;
       }
-      this.client.publish(topic, JSON.stringify(d.cfg), { qos: 1, retain: true });
-      n++;
     }
-    this.log(`MQTT Discovery veröffentlicht: ${n} Entitäten`);
+    this.log(`MQTT Discovery veröffentlicht: ${n} Entitäten`
+             + (skipped.length ? ` · ${skipped.length} übersprungen: ${skipped.slice(0, 5).join(', ')}` : ''));
     return n;
   }
 
@@ -255,7 +279,7 @@ export class HaMqtt {
   }
 
   publishState(e, state) {
-    if (!this.connected || !state) return;
+    if (!this.connected || !state || !Number.isInteger(e?.module)) return;
     const t = this.topics(e);
     if (e.kind === 'dimmer') {
       this.client.publish(t.state, JSON.stringify({ state: state.state, brightness: state.brightness }),

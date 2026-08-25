@@ -162,3 +162,42 @@ test('15 Dimmer nutzt die Regelbasis, 2 weitere sind nur Hardware', () => {
       `Modul ${e.module.toString(16)} muss laut Hardware ein Dimmer sein`);
   }
 });
+
+// Regression: das Add-on stürzte beim MQTT-Discovery mit
+// "Cannot read properties of undefined (reading 'toString')" ab. Ursache: in
+// data/entities.json standen kuratierte Entitäts-IDs aus einer älteren
+// Ableitung. Aus `switch_40_0_0` war `light_40_0_0` geworden (die
+// Anschlussliste sagt „Lampe vor Garage"), der verwaiste Eintrag wurde zu einer
+// Entität OHNE Modul — und die kippte den ganzen Prozess.
+test('kuratierte Overrides ziehen auf umbenannte Entitäts-IDs um', () => {
+  const ov = { entities: {
+    switch_40_0_0: { name: 'Lampe Kesslers', area: 'Hof' },      // heißt jetzt light_40_0_0
+    cover_15_0_2: { name: 'War mal Rolladen', enabled: true },   // ist jetzt eine Steckdose
+  } };
+  const list = mergeOverrides(deriveEntities(rb, { labels }), ov, { labels });
+  assert.deepEqual(list.migrations.map((x) => `${x.from}->${x.to}`),
+                   ['switch_40_0_0->light_40_0_0', 'cover_15_0_2->switch_15_0_2']);
+  const l = list.find((e) => e.id === 'light_40_0_0');
+  assert.equal(l.name, 'Lampe Kesslers', 'der eigene Name überlebt die Umbenennung');
+  assert.equal(l.area, 'Hof');
+  assert.equal(list.find((e) => e.id === 'switch_40_0_0'), undefined, 'keine Geister-ID mehr');
+});
+
+test('ein Override ohne Adresse wird verworfen, nicht durchgelassen', () => {
+  const ov = { entities: { kaputt: { name: 'ohne alles' }, 'x-y-z': { area: 'nirgends' } } };
+  const list = mergeOverrides(deriveEntities(rb, { labels }), ov, { labels });
+  assert.deepEqual(list.dropped.sort(), ['kaputt', 'x-y-z']);
+  assert.equal(list.every((e) => Number.isInteger(e.module)), true,
+    'jede Entität muss eine Modulnummer haben');
+});
+
+test('eine ID mit gültiger Adresse bleibt erhalten, auch ohne Regel und Klemme', () => {
+  const ov = { entities: { input_55_3_2: { name: 'Taster Werkstatt', enabled: true } } };
+  const list = mergeOverrides(deriveEntities(rb, { labels }), ov, { labels });
+  const e = list.find((x) => x.id === 'input_55_3_2');
+  assert.ok(e, 'von Hand angelegte Entitäten bleiben');
+  assert.equal(e.module, 0x55);
+  assert.equal(e.sub, 3);
+  assert.equal(e.bit, 2);
+  assert.equal(e.kind, 'button');
+});

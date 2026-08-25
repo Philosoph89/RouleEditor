@@ -557,13 +557,65 @@ export function cleanDesc(desc) {
   return s || null;
 }
 
+// Die Entitäts-ID kodiert die Adresse: "light_1a_0_0", "input_12_0_4",
+// "cover_19_0_0", "light_11_dim", "level_1c_0". Daraus lässt sich ein
+// verwaister Override wieder zuordnen.
+export function parseEntityId(id) {
+  let m = /^([a-z]+)_([0-9a-f]{2})_(\d+)_(\d+)$/.exec(String(id || ''));
+  if (m) return { prefix: m[1], module: parseInt(m[2], 16), sub: Number(m[3]), bit: Number(m[4]) };
+  m = /^([a-z]+)_([0-9a-f]{2})_dim$/.exec(String(id || ''));
+  if (m) return { prefix: m[1], module: parseInt(m[2], 16), dimmer: true };
+  m = /^([a-z]+)_([0-9a-f]{2})_(\d+)$/.exec(String(id || ''));
+  if (m) return { prefix: m[1], module: parseInt(m[2], 16), sub: Number(m[3]) };
+  return null;
+}
+
+// Feldnamen, die dem Nutzer gehören und eine Umbenennung überleben müssen.
+const USER_FIELDS = ['name', 'area', 'enabled', 'deviceClass', 'travelSec', 'kind'];
+
 export function mergeOverrides(derived, overrides = {}, { labels = {} } = {}) {
   const byId = new Map(derived.map((e) => [e.id, { ...e }]));
+  const migrated = [];
+  const dropped = [];
   for (const [id, ov] of Object.entries(overrides.entities || {})) {
-    const base = byId.get(id) || { id, source: 'manual' };
-    byId.set(id, { ...base, ...ov, id });
+    if (byId.has(id)) { byId.set(id, { ...byId.get(id), ...ov, id }); continue; }
+
+    // Unbekannte ID: Die Ableitung wird besser, dabei ändern sich IDs — aus
+    // `switch_40_0_0` wurde `light_40_0_0`, als die Anschlussliste „Lampe vor
+    // Garage" lieferte. Ohne Umzug würde daraus eine Entität OHNE Adresse, die
+    // beim MQTT-Discovery das ganze Add-on abgeschossen hat.
+    const a = parseEntityId(id);
+    const target = a && [...byId.values()].find((e) => e.module === a.module
+      && (a.dimmer ? e.kind === 'dimmer'
+         : a.bit === undefined ? e.sub === a.sub && (e.kind === 'level' || e.kind === 'fan')
+         : e.sub === a.sub && (e.bit === a.bit || e.bitDir === a.bit || e.bitRun === a.bit))
+      // Eingang bleibt Eingang, Ausgang bleibt Ausgang
+      && ((a.prefix === 'input') === (e.kind === 'button')));
+    if (target) {
+      const keep = {};
+      for (const f of USER_FIELDS) if (ov[f] !== undefined) keep[f] = ov[f];
+      byId.set(target.id, { ...target, ...keep, id: target.id });
+      migrated.push({ from: id, to: target.id });
+      continue;
+    }
+
+    // Kein Ziel: nur behalten, wenn die ID eine vollständige Adresse hergibt
+    // (von Hand angelegte Entität, deren Adresse die Regelbasis nicht kennt).
+    if (a && a.bit !== undefined && (ov.module !== undefined || a.module !== undefined)) {
+      byId.set(id, { kind: ov.kind || (a.prefix === 'input' ? 'button' : a.prefix),
+                     module: a.module, sub: a.sub, bit: a.bit,
+                     source: 'manual', ...ov, id });
+    } else {
+      dropped.push(id);
+    }
   }
-  const list = [...byId.values()];
+  const list = [...byId.values()].filter((e) => {
+    // Letzte Reißleine: ohne Modul/Sub ist eine Entität nicht adressierbar.
+    const ok = Number.isInteger(e.module) && Number.isInteger(e.sub ?? (e.kind === 'dimmer' ? 0 : undefined));
+    if (!ok) dropped.push(e.id);
+    return ok;
+  });
+
   // default enablement: physical devices yes, rule-base flag bits no
   for (const e of list) {
     if (e.enabled === undefined) e.enabled = !e.internal;
@@ -577,7 +629,11 @@ export function mergeOverrides(derived, overrides = {}, { labels = {} } = {}) {
       e.name = labels[token] || `${KIND_NAME[e.kind] || 'Gerät'} ${token}`;
     }
   }
-  return list.sort((a, b) => (a.module - b.module) || a.id.localeCompare(b.id));
+  const sorted = list.sort((a, b) => (a.module - b.module) || a.id.localeCompare(b.id));
+  // Diagnose für den Server (Log + Anzeige), ohne die Liste zu verändern
+  Object.defineProperty(sorted, 'migrations', { value: migrated, enumerable: false });
+  Object.defineProperty(sorted, 'dropped', { value: dropped, enumerable: false });
+  return sorted;
 }
 
 function areaOf(e, overrides) {

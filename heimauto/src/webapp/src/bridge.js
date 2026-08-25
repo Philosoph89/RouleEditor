@@ -30,6 +30,7 @@ export class Bridge {
     this.queueOutput = queueOutput || (() => {});
     this.entities = new Map();          // id -> entity definition
     this.byInput = new Map();           // "M.sub" -> input entities on that byte
+    this.invalid = [];                  // verworfene, nicht adressierbare Entitäten
     this.outputs = new Map();           // "M.sub" -> byte we hold
     this.inputs = new Map();            // "M.sub" -> last reported byte
     this.covers = new Map();            // id -> { position, target, dir, moving, startedAt }
@@ -42,7 +43,12 @@ export class Bridge {
   }
 
   setEntities(list) {
-    this.entities = new Map(list.filter((e) => e.enabled !== false).map((e) => [e.id, e]));
+    // Ohne Modul/Sub lässt sich keine Adresse bilden — solche Datensätze werden
+    // hier verworfen, statt später NaN in einen Ausgangsframe zu tragen.
+    this.invalid = list.filter((e) => e.enabled !== false && !Number.isInteger(e.module)).map((e) => e.id);
+    this.entities = new Map(list
+      .filter((e) => e.enabled !== false && Number.isInteger(e.module))
+      .map((e) => [e.id, e]));
     // index the inputs by (module, sub) — noteInput runs for every poll reply
     this.byInput = new Map();
     for (const e of this.entities.values()) {
