@@ -63,3 +63,31 @@ test('shutter sends the same bytes as the original log', () => {
   it2.processEventKey((0x12 << 7) | 1);
   assert.equal(it2.state.getSubByte(0x12, 0), 0x02, 'down = bit 1 only');
 });
+
+// Regression: die Modul-Map bildet unbekannte Adressen originalgetreu auf Slot 0
+// ab. Schreibt eine Regel in ein noch nicht registriertes Modul, teilen sich
+// mehrere Module denselben Speicher — beim Lüftungs-Tastendruck meldeten alle
+// acht LED-Module denselben Wert. setModules registriert deshalb vorab.
+test('setModules registriert alle bekannten Module (kein Slot-0-Aliasing)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { RuleBase } = await import('../src/hrb.js');
+  const { Interpreter } = await import('../src/interpreter.js');
+  const { LiveController } = await import('../src/livecontrol.js');
+  const rb = RuleBase.fromBuffer(readFileSync(new URL('../../RouleBase.hrb', import.meta.url)));
+  const it = new Interpreter(rb);
+  const live = new LiveController(it);
+  const addrs = [0x10, 0x11, 0x13, 0x15, 0x18, 0x19, 0x1b, 0x1c, 0x31];
+  live.setModules(addrs);
+  const slots = addrs.map((a) => it.state.slot(a));
+  assert.equal(new Set(slots).size, addrs.length, 'jedes Modul braucht seinen eigenen Slot');
+  // Slot 0 ist der Auffangplatz für unbekannte Adressen und muss dem
+  // Kontext-Modul 0x00 gehören, nicht einem echten Modul.
+  assert.equal(it.state.slot(0x00), 0);
+  assert.equal(slots.includes(0), false, 'kein echtes Modul auf dem Auffang-Slot');
+
+  // Getrennte Speicher: ein Schreibvorgang darf kein anderes Modul verändern
+  it.state.setSubByte(0x10, 1, 0x04);
+  it.state.setSubByte(0x31, 1, 0xf0);
+  assert.equal(it.state.getSubByte(0x10, 1), 0x04);
+  assert.equal(it.state.getSubByte(0x31, 1), 0xf0);
+});

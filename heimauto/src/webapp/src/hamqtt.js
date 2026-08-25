@@ -21,6 +21,8 @@ const COMPONENT = {
   dimmer: 'light',
   cover: 'cover',
   button: 'binary_sensor',
+  fan: 'fan',        // Stufenschalter mit Lüftungs-Charakter (Prozent-Slider)
+  level: 'number',   // sonstiger Stufenschalter (0..n)
 };
 
 // The bridge itself as a Home Assistant device, so the per-module devices have
@@ -94,6 +96,7 @@ export class HaMqtt {
       this.log(`MQTT verbunden: ${url}`);
       this.client.publish(`${this.base}/status`, 'online', { qos: 1, retain: true });
       this.client.subscribe([`${this.base}/+/set`, `${this.base}/+/set_position`,
+                            `${this.base}/+/set_percentage`,
                             `${this.prefix}/status`], { qos: 1 });
       this.publishDiscovery();
       this.bridge.publishAll();
@@ -146,7 +149,8 @@ export class HaMqtt {
   topics(e) {
     const b = `${this.base}/${e.id}`;
     return { state: `${b}/state`, set: `${b}/set`, position: `${b}/position`,
-             setPosition: `${b}/set_position` };
+             setPosition: `${b}/set_position`,
+             percentage: `${b}/percentage`, setPercentage: `${b}/set_percentage` };
   }
 
   discoveryConfig(e) {
@@ -184,6 +188,18 @@ export class HaMqtt {
       case 'button':
         return { comp, cfg: { ...common, state_topic: t.state, payload_on: 'ON', payload_off: 'OFF',
                               device_class: e.deviceClass || undefined } };
+      case 'fan':
+        // Die Stufen sind diskret (16 bei der Lüftung): speed_range 1..steps-1
+        // lässt Home Assistant genau diese Stufen anfahren, Stufe 0 = aus.
+        return { comp, cfg: { ...common, state_topic: t.state, command_topic: t.set,
+                              payload_on: 'ON', payload_off: 'OFF',
+                              percentage_state_topic: t.percentage,
+                              percentage_command_topic: t.setPercentage,
+                              speed_range_min: 1, speed_range_max: Math.max(1, (e.steps || 2) - 1) } };
+      case 'level':
+        return { comp, cfg: { ...common, state_topic: t.percentage, command_topic: t.setPercentage,
+                              min: 0, max: Math.max(1, (e.steps || 2) - 1), step: 1,
+                              mode: 'slider', unit_of_measurement: 'Stufe' } };
       default: return null;
     }
   }
@@ -246,6 +262,12 @@ export class HaMqtt {
     } else if (e.kind === 'cover') {
       this.client.publish(t.state, String(state.state), { qos: 1, retain: true });
       this.client.publish(t.position, String(state.position), { qos: 1, retain: true });
+    } else if (e.kind === 'fan') {
+      this.client.publish(t.state, String(state.state), { qos: 1, retain: true });
+      // Home Assistant erwartet hier die STUFE (speed_range), nicht Prozent.
+      this.client.publish(t.percentage, String(state.level), { qos: 1, retain: true });
+    } else if (e.kind === 'level') {
+      this.client.publish(t.percentage, String(state.level), { qos: 1, retain: true });
     } else {
       this.client.publish(t.state, String(state.state), { qos: 1, retain: true });
     }
@@ -263,12 +285,14 @@ export class HaMqtt {
       }
       return;
     }
-    const m = topic.match(new RegExp(`^${escapeRe(this.base)}/([^/]+)/(set|set_position)$`));
+    const m = topic.match(new RegExp(`^${escapeRe(this.base)}/([^/]+)/(set|set_position|set_percentage)$`));
     if (!m) return;
     const [, id, kind] = m;
     this.stats.commands++;
     try {
       if (kind === 'set_position') this.bridge.command(id, { position: Number(text) });
+      // fan/number liefern die STUFE (speed_range 1..n bzw. number 0..n)
+      else if (kind === 'set_percentage') this.bridge.command(id, { level: Number(text) });
       else if (text.trim().startsWith('{')) this.bridge.command(id, JSON.parse(text));
       else this.bridge.command(id, text.trim());
     } catch (e) {

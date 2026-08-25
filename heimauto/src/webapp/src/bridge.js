@@ -34,6 +34,7 @@ export class Bridge {
     this.inputs = new Map();            // "M.sub" -> last reported byte
     this.covers = new Map();            // id -> { position, target, dir, moving, startedAt }
     this.dimmers = new Map();           // id -> { on, level }
+    this.levels = new Map();            // id -> { value }  (Stufenschalter / Lüftung)
     this.onState = null;                // (entity, state) -> publish
     this.onLog = null;
     this.tickMs = tickMs;
@@ -57,6 +58,9 @@ export class Bridge {
       if (e.kind === 'dimmer' && !this.dimmers.has(e.id)) {
         this.dimmers.set(e.id, { on: false, level: 0 });
       }
+      if ((e.kind === 'level' || e.kind === 'fan') && !this.levels.has(e.id)) {
+        this.levels.set(e.id, { value: this.getByte(e.module, e.sub) });
+      }
     }
   }
 
@@ -66,6 +70,7 @@ export class Bridge {
       outputs: Object.fromEntries(this.outputs),
       covers: Object.fromEntries([...this.covers].map(([id, c]) => [id, { position: c.position, unknown: c.unknown }])),
       dimmers: Object.fromEntries(this.dimmers),
+      levels: Object.fromEntries(this.levels),
     };
   }
   restore(snap) {
@@ -77,6 +82,9 @@ export class Bridge {
     }
     for (const [id, v] of Object.entries(snap.dimmers || {})) {
       this.dimmers.set(id, { on: Boolean(v.on), level: clamp(Number(v.level) || 0, 0, DIM_LEVEL_MAX) });
+    }
+    for (const [id, v] of Object.entries(snap.levels || {})) {
+      this.levels.set(id, { value: clamp(Number(v.value) || 0, 0, 0xff) });
     }
   }
 
@@ -112,6 +120,8 @@ export class Bridge {
       case 'light':   return this._cmdRelay(e, cmd);
       case 'dimmer':  return this._cmdDimmer(e, cmd);
       case 'cover':   return this._cmdCover(e, cmd);
+      case 'level':
+      case 'fan':     return this._cmdLevel(e, cmd);
       case 'button':  throw new Error(`${id} is an input and cannot be commanded`);
       default:        throw new Error(`entity kind ${e.kind} has no command`);
     }
@@ -162,6 +172,76 @@ export class Bridge {
     const cmd = dir === 'up' ? DIM.RAMP_UP : dir === 'down' ? DIM.RAMP_DOWN : DIM.STOP;
     this.setByte(e.module, e.cmdSub ?? 4, cmd);
     return { ramp: dir };
+  }
+
+  // Stufenschalter (die Lüftung der Anlage): ein Byte-Register, das die
+  // Original-Regeln um eine feste Schrittweite hoch- und runterzählen
+  // (1C.0 += / -= $11, 16 Stufen). Home Assistant setzt hier absolut.
+  //
+  // Zusätzlich werden die Stufen-LEDs mitgeschrieben: das Muster je Stufe steht
+  // in der Regelbasis und im Original-Log byte-genau (Stufe 0 -> 31.1 = 0x30,
+  // 18.1 = 0x04, 19.1 = 0x04). Ohne das zeigen die Taster an der Wand im
+  // HA-Betrieb dauerhaft die falsche Stufe an.
+  _cmdLevel(e, cmd) {
+    const st = this.levels.get(e.id) || { value: this.getByte(e.module, e.sub) };
+    const obj = typeof cmd === 'object' ? cmd : { action: String(cmd) };
+    const steps = e.steps || 1;
+    const stepOf = (v) => Math.round((v - e.min) / (e.step || 1));
+    let idx = clamp(stepOf(st.value), 0, steps - 1);
+
+    if (obj.step !== undefined) {
+      idx += Number(obj.step);
+      idx = e.wrap ? ((idx % steps) + steps) % steps : clamp(idx, 0, steps - 1);
+    } else if (obj.level !== undefined) {
+      idx = clamp(Math.round(Number(obj.level)), 0, steps - 1);
+    } else if (obj.percentage !== undefined) {
+      const pct = clamp(Number(obj.percentage), 0, 100);
+      idx = Math.round((pct / 100) * (steps - 1));
+    } else if (obj.state !== undefined || obj.action) {
+      const a = String(obj.state ?? obj.action).toUpperCase();
+      if (a === 'ON') idx = idx > 0 ? idx : steps - 1;
+      else if (a === 'OFF') idx = 0;
+      else if (a === 'UP' || a === '+') idx = clamp(idx + 1, 0, steps - 1);
+      else if (a === 'DOWN' || a === '-') idx = clamp(idx - 1, 0, steps - 1);
+      else throw new Error(`unbekanntes Kommando ${a}`);
+    } else {
+      throw new Error('Kommando erwartet level, percentage, step oder ON/OFF');
+    }
+
+    const value = clamp(e.min + idx * (e.step || 1), 0, 0xff);
+    st.value = value;
+    this.levels.set(e.id, st);
+    this.setByte(e.module, e.sub, value);
+    this._writeIndicators(e, value);
+    return this._publish(e, this.levelState(e));
+  }
+
+  // LED-Muster der erreichten Stufe schreiben (Set-/Clear-Masken je Ausgangsbyte,
+  // aus der Regelbasis abgeleitet). Bits, die die Tabelle nicht nennt, bleiben
+  // unangetastet — es hängen auch andere Anzeigen an diesen Bytes.
+  _writeIndicators(e, value) {
+    const table = e.indicators?.[value] || e.indicators?.[String(value)];
+    if (!table) return 0;
+    for (const t of table) {
+      const cur = this.getByte(t.module, t.sub);
+      const next = ((cur | (t.set & 0xff)) & ~(t.clr & 0xff)) & 0xff;
+      if (next !== cur || !this.outputs.has(`${(t.module & 0xff).toString(16).padStart(2, '0')}.${t.sub}`)) {
+        this.setByte(t.module, t.sub, next);
+      }
+    }
+    return table.length;
+  }
+
+  levelState(e) {
+    const st = this.levels.get(e.id) || { value: this.getByte(e.module, e.sub) };
+    const steps = e.steps || 1;
+    const idx = clamp(Math.round((st.value - e.min) / (e.step || 1)), 0, steps - 1);
+    return {
+      state: idx > 0 ? 'ON' : 'OFF',
+      level: idx, steps,
+      percentage: steps > 1 ? Math.round((idx / (steps - 1)) * 100) : 0,
+      raw: st.value,
+    };
   }
 
   _cmdCover(e, cmd) {
@@ -263,6 +343,9 @@ export class Bridge {
       }
       case 'cover':
         return this.coverState(e);
+      case 'level':
+      case 'fan':
+        return this.levelState(e);
       case 'button': {
         const byte = this.inputs.get(key(e.module, e.sub));
         if (byte === undefined) return null;

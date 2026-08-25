@@ -61,7 +61,8 @@ function devHtml(o) {
 function firedHtml(f) {
   if (!f.devices?.length) {
     return `<span class="dev unknown"><code>${esc(f.token)}</code>
-      <i class="muted">kein Gerät zugeordnet</i> <span class="muted small">${esc(f.hex)}</span></span>`;
+      <i class="muted">${esc(f.role || 'kein Gerät zugeordnet')}</i>
+      <span class="muted small">${esc(f.hex)}</span></span>`;
   }
   return f.devices.map((d) => `<span class="dev">
       <code>${esc(f.token)}</code>
@@ -127,7 +128,7 @@ function histHtml(ev) {
   const name = ev.entity?.name || ev.label;
   const outs = (ev.source === 'regel' ? ev.fired : ev.outputs) || [];
   const outNames = outs.map((o) => {
-    const n = o.entity?.name || o.label || o.token;
+    const n = o.entity?.name || o.label || (o.role ? `${o.token} (${o.role})` : o.token);
     return o.state ? `${n} (${o.state})` : n;
   }).slice(0, 3);
   return `<div class="hist-row ${ev.known ? '' : 'unknown'}" data-token="${esc(ev.token)}">

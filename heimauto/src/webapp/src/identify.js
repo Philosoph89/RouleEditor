@@ -19,6 +19,7 @@
 import { decode } from './compiler.js';
 import { renderFromDecoded } from './instructionset.js';
 import { isAssignment, operatorOf } from './entities.js';
+import { SUB_ROLES } from './moduleinfo.js';
 
 const hx2 = (n) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');
 
@@ -59,6 +60,9 @@ export function entityForOutput(entities, module, sub, bit) {
     } else if (e.kind === 'dimmer') {
       if (sub === e.levelSub || sub === e.cmdSub) return e;
       if (sub === 0 && bit !== undefined && e.stateBit === bit) return e;
+    } else if (e.kind === 'level' || e.kind === 'fan') {
+      // Stufenregister: ein Byte, kein Bit — deshalb auch ohne Bit-Angabe treffen
+      if (e.sub === sub) return e;
     } else if (e.kind === 'switch' || e.kind === 'light') {
       if (e.sub === sub && e.bit === bit) return e;
     }
@@ -151,11 +155,21 @@ export function entitiesForByte(entities, module, sub, value, touched = null) {
   const hit = (mask) => !touched || (touched.whole || (touched.bits & mask) !== 0);
   for (const e of entities) {
     if (e.module !== module) continue;
+    // Abgeschaltete Entitäten (Merker, Status-LEDs) würden die Karte zumüllen:
+    // ein Lüftungs-Tastendruck schreibt acht LED-Bits auf 31.1 und stand vorher
+    // als acht Zeilen "Schalter 31.1.x EIN/AUS" da. Sie werden unten als EINE
+    // Zeile mit der Rolle des Sub-Bytes zusammengefasst.
+    if (e.enabled === false) continue;
     if (e.kind === 'cover' && e.sub === sub) {
       if (!hit((1 << e.bitDir) | (1 << e.bitRun))) continue;
       const up = (value >> e.bitDir) & 1;
       const run = (value >> e.bitRun) & 1;
       out.push({ entity: brief(e), state: run ? (up ? 'fährt auf' : 'fährt zu') : 'Stopp', on: Boolean(run) });
+    } else if ((e.kind === 'level' || e.kind === 'fan') && e.sub === sub) {
+      if (!hit(0xff)) continue;
+      const steps = e.steps || 1;
+      const idx = Math.round((value - e.min) / (e.step || 1));
+      out.push({ entity: brief(e), state: `Stufe ${idx} von ${steps - 1}`, on: idx > 0 });
     } else if (e.kind === 'dimmer' && (sub === e.levelSub || sub === e.cmdSub)) {
       if (!hit(0xff)) continue;
       const max = e.levelMax || 0x40;
@@ -185,6 +199,9 @@ export function describeOutputs(outputs, { entities, labels = {}, touched = null
       devices: hits,
       entity: hits[0]?.entity || null,
       state: hits[0]?.state || null,
+      // Wenn keine gemeldete Entität an dem Byte hängt, sagt wenigstens die
+      // Rolle des Sub-Bytes, was da passiert (Sub 1 = Status-LEDs der Taster).
+      role: hits.length ? null : (SUB_ROLES[o.sub] || null),
       label: labels[`${hx2(o.module)}.${o.sub}`] || null,
     };
   });

@@ -31,6 +31,7 @@
 
 import { decode } from './compiler.js';
 import { OPERATORS } from './instructionset.js';
+import { moduleInfo, moduleLabel, MODULE_TYPES } from './moduleinfo.js';
 
 const hx2 = (n) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');
 
@@ -80,7 +81,7 @@ export function chains(rulebase) {
 
 // --- derivation -------------------------------------------------------------
 
-export function deriveEntities(rulebase, { labels = {}, modules = [] } = {}) {
+export function deriveEntities(rulebase, { labels = {}, modules = [], hardware = null } = {}) {
   const known = new Set(modules.map((m) => m & 0xff));
   const cs = chains(rulebase);
 
@@ -141,6 +142,117 @@ export function deriveEntities(rulebase, { labels = {}, modules = [] } = {}) {
     const [m, s, b] = k.split('.');
     coverBits.add(`${m}.${s}.${b}`);
     coverBits.add(`${m}.${s}.${Number(b) + 1}`);
+  }
+
+  // 2b. Stufenschalter: ein Byte-Register, das um eine feste Schrittweite hoch-
+  // und runtergezählt wird. Die Lüftung der Anlage ist genau das (belegt durch
+  // die Original-Logs vom 2026-08-25, "Lüftung oben/unten 15x hoch/runter"):
+  //     1C.0 < $FF ; 1C.0 += $11      (eine Stufe höher)
+  //     1C.0 > $00 ; 1C.0 -= $11      (eine Stufe tiefer)
+  //     1C.0 := $FF / := $00          (beide Tasten = Maximum / Aus)
+  // 0x11 als Schrittweite ergibt 16 Stufen (0x00, 0x11, … 0xEE, 0xFF) — genau
+  // die Werte, die im Log auf dem Bus stehen. Am Modul hängen Widerstandsreihen.
+  const levels = new Map();          // "M.sub" -> { step, min, max, wrap }
+  // Erster Durchgang: wo wird überhaupt schrittweise gezählt?
+  for (const c of cs) {
+    for (const st of c.stmts) {
+      if (!isAssignment(st) || st.family !== 'BYTE_CONST') continue;
+      if (!['+=', '-='].includes(operatorOf(st))) continue;
+      const k = `${hx2(st.dstMod)}.${st.dstSub}`;
+      const cur = levels.get(k) || { step: 0, min: 0, max: 0xff, wrap: false };
+      cur.step = cur.step || (st.const8 & 0xff) || 1;
+      levels.set(k, cur);
+    }
+  }
+  // Zweiter Durchgang: Grenzen und Rundlauf. Getrennt, weil Wächter und Schritt
+  // in VERSCHIEDENEN Ketten stehen können (bei 1C.7 tun sie das).
+  for (const c of cs) {
+    const guards = c.stmts.filter((d) => !isAssignment(d) && d.family === 'BYTE_CONST'
+                                         && ['>', '>=', '<', '=<'].includes(operatorOf(d)));
+    if (!guards.length) continue;
+    const steps = c.stmts.filter((d) => isAssignment(d) && d.family === 'BYTE_CONST'
+                                        && ['+=', '-='].includes(operatorOf(d)));
+    const sets = c.stmts.filter((d) => isAssignment(d) && d.family === 'BYTE_CONST'
+                                       && operatorOf(d) === ':=');
+    for (const g of guards) {
+      const k = `${hx2(g.dstMod)}.${g.dstSub}`;
+      const cur = levels.get(k);
+      if (!cur) continue;
+      const op = operatorOf(g);
+      const sameReg = (d) => d.dstMod === g.dstMod && d.dstSub === g.dstSub;
+      if (steps.some(sameReg)) {
+        // Wächter + Schritt in einer Kette = Bereichsgrenze:
+        //   1C.0 > $00 ; 1C.0 -= $11     (nur runter, wenn über dem Minimum)
+        //   1C.0 < $FF ; 1C.0 += $11     (nur hoch, wenn unter dem Maximum)
+        if (op === '>' || op === '>=') cur.min = g.const8 & 0xff;
+        if (op === '<' || op === '=<') cur.max = g.const8 & 0xff;
+      } else {
+        // Wächter + Konstanten-Zuweisung = Überlauf: "1C.7 > $07 ; 1C.7 := $00"
+        // heißt 8 Stellungen mit Rundlauf — nicht "Minimum 7".
+        const reset = sets.find(sameReg);
+        if (!reset) continue;
+        if (op === '>' || op === '>=') {
+          cur.max = g.const8 & 0xff;
+          cur.min = reset.const8 & 0xff;
+          cur.wrap = true;
+        }
+      }
+    }
+  }
+
+  // 2c. Stufenanzeige: Ketten der Form "<Register> == $XX ; <Bit-Zuweisungen>"
+  // sind die LED-Muster je Stufe. Sie stehen byte-genau so im Original-Log
+  // (Stufe 0x00 -> 31.1 = 0x30, 18.1 = 0x04, 19.1 = 0x04, Rest 0x00), also kann
+  // die Bridge sie im HA-Betrieb selbst nachbilden — sonst zeigen die
+  // Taster-LEDs an der Wand die falsche Stufe.
+  const indicators = new Map();      // "M.sub" -> { value -> [{module, sub, set, clr}] }
+  const indicatorConflicts = [];     // Abweichungen zwischen den Bedien-Tastern
+  const variants = new Map();        // "reg|value" -> Map<signature, {table, triggers}>
+  for (const c of cs) {
+    const first = c.stmts[0];
+    if (!first || isAssignment(first) || first.family !== 'BYTE_CONST') continue;
+    if (operatorOf(first) !== '==') continue;
+    const reg = `${hx2(first.dstMod)}.${first.dstSub}`;
+    if (!levels.has(reg)) continue;
+    const bits = c.stmts.slice(1).filter((d) => isAssignment(d) && d.family === 'BIT_CONST');
+    if (!bits.length || bits.length !== c.stmts.length - 1) continue;
+    const byByte = new Map();
+    for (const b of bits) {
+      const k = `${hx2(b.dstMod)}.${b.dstSub}`;
+      const e = byByte.get(k) || { module: b.dstMod, sub: b.dstSub, set: 0, clr: 0 };
+      if (assignedBitValue(b) === 1) e.set |= 1 << b.dstBit; else e.clr |= 1 << b.dstBit;
+      byByte.set(k, e);
+    }
+    const table = [...byByte.values()].sort((a, b) => (a.module - b.module) || (a.sub - b.sub));
+    const sig = table.map((t) => `${t.module}.${t.sub}:${t.set}/${t.clr}`).join(',');
+    const vkey = `${reg}|${first.const8}`;
+    if (!variants.has(vkey)) variants.set(vkey, new Map());
+    const v = variants.get(vkey);
+    const hit = v.get(sig) || { table, triggers: [] };
+    hit.triggers.push(c.groupId);
+    v.set(sig, hit);
+  }
+  // Jede Stufe steht viermal in der Regelbasis — einmal je Bedien-Taster. Sie
+  // sollten identisch sein, sind es aber NICHT: der Taster 0x1880 („Lüftung
+  // Flur OG niedriger") schreibt bei Stufe 0x22 und 0x00 ein falsches
+  // LED-Muster (0x70 statt 0xF0 bzw. 0x30). Im Original-Log ist genau das zu
+  // sehen — beim Runterfahren bleibt die Anzeige stehen. Wir übernehmen deshalb
+  // die Mehrheitsvariante (3 von 4) und melden die Abweichung.
+  for (const [vkey, v] of variants) {
+    const [reg, valStr] = vkey.split('|');
+    const value = Number(valStr);
+    const ranked = [...v.values()].sort((a, b) => b.triggers.length - a.triggers.length);
+    if (!indicators.has(reg)) indicators.set(reg, {});
+    indicators.get(reg)[value] = ranked[0].table;
+    for (const odd of ranked.slice(1)) {
+      indicatorConflicts.push({
+        register: reg, value,
+        majority: ranked[0].triggers.map((g) => '0x' + g.toString(16).toUpperCase()),
+        deviating: odd.triggers.map((g) => '0x' + g.toString(16).toUpperCase()),
+        expected: ranked[0].table.map((t) => `${hx2(t.module)}.${t.sub}:+${hx2(t.set)}/-${hx2(t.clr)}`),
+        found: odd.table.map((t) => `${hx2(t.module)}.${t.sub}:+${hx2(t.set)}/-${hx2(t.clr)}`),
+      });
+    }
   }
 
   // 3. every assigned bit (for switches) and the flag bits (excluded by default)
@@ -204,6 +316,47 @@ export function deriveEntities(rulebase, { labels = {}, modules = [] } = {}) {
       name: label(`${mh}.dim`, `${mh}.${DIM_LEVEL_SUB}`) || `Dimmer ${mh}`,
       online: known.size === 0 || known.has(M),
       source: 'derived',
+    });
+  }
+
+  for (const [key, lv] of [...levels].sort()) {
+    const [mh, ss] = key.split('.');
+    const M = parseInt(mh, 16), sub = Number(ss);
+    const step = lv.step || 1;
+    const steps = Math.floor((lv.max - lv.min) / step) + 1;
+    if (steps < 2 || steps > 64) continue;   // ein Zähler ist kein Stufenschalter
+    const name = label(key) || `Stufenschalter ${key}`;
+    // Ein Stufenregister, das nach Lüftung klingt, wird in Home Assistant ein
+    // fan (Prozent-Slider); alles andere ein number (0..n).
+    const isFan = /l[üu]ftung|ventilat|abluft|zuluft|fan|gebl[äa]se/i.test(name);
+    out.push({
+      id: `level_${mh.toLowerCase()}_${sub}`,
+      kind: isFan ? 'fan' : 'level',
+      module: M, sub,
+      step, min: lv.min, max: lv.max, steps, wrap: Boolean(lv.wrap),
+      indicators: indicators.get(key) || null,
+      indicatorConflicts: indicatorConflicts.filter((c) => c.register === key),
+      name,
+      online: known.size === 0 || known.has(M),
+      source: 'derived',
+    });
+  }
+
+  // Dimmer-Hardware, die die alte Konfiguration nicht nutzt: als Vorschlag
+  // anlegen (abgeschaltet), damit man sie in Home Assistant dazuholen kann.
+  for (const [key, info] of Object.entries({ ...MODULE_TYPES, ...(hardware || {}) })) {
+    if (info.type !== 'Dimmer') continue;
+    const M = parseInt(key, 16);
+    if (dimmers.has(M)) continue;
+    out.push({
+      id: `light_${key.toLowerCase()}_dim`,
+      kind: 'dimmer', module: M,
+      levelSub: DIM_LEVEL_SUB, cmdSub: DIM_CMD_SUB, levelMax: DIM_LEVEL_MAX,
+      stateBit: null,
+      name: label(`${key}.dim`) || `Dimmer ${key} (unbenutzt)`,
+      online: known.size === 0 || known.has(M),
+      hardwareOnly: true, enabled: false,
+      source: 'hardware',
     });
   }
 
@@ -278,11 +431,15 @@ function areaOf(e, overrides) {
 
 export function moduleDevice(module, overrides = {}) {
   const mh = hx2(module);
+  const info = moduleInfo(module, overrides.hardware || {});
   return {
     identifiers: [`heimauto_mod_${mh.toLowerCase()}`],
-    name: (overrides.modules && overrides.modules[mh]) || `HomeBus Modul ${mh}`,
-    manufacturer: 'HomeBus',
-    model: 'HomeBus I/O-Modul',
+    name: (overrides.modules && overrides.modules[mh]) || moduleLabel(module, overrides.hardware || {}),
+    manufacturer: 'HomeBus (Thomas Manthey)',
+    // Typ und Version melden die Module selbst (SignaturString); die Liste
+    // stammt aus dem ModulListe-Tab des Originals, siehe src/moduleinfo.js.
+    model: info ? `HomeBus-${info.type} ${info.version}` : 'HomeBus I/O-Modul',
+    sw_version: info?.date || undefined,
     via_device: 'heimauto_master',
   };
 }

@@ -23,6 +23,7 @@ import { COMMANDS, OPERATORS, FAMILIES, RANGES, SYNTAX, DST_KEYWORDS, SRC_FORMS,
 import { decode as decodeRuleExact, encode as encodeRuleExact, compileText, compileLine } from './src/compiler.js';
 import { buildModel, applyModel, decodeTrigger, triggerGroupId } from './src/model.js';
 import { deriveEntities, mergeOverrides } from './src/entities.js';
+import { MODULE_TYPES, SUB_ROLES, moduleInfo, LABEL_SEED } from './src/moduleinfo.js';
 import { buildIndex, identifyInput, describeOutputs, touchedMask } from './src/identify.js';
 import { Bridge } from './src/bridge.js';
 import { HaMqtt } from './src/hamqtt.js';
@@ -40,20 +41,16 @@ const BRIDGE_JSON = join(DATA_DIR, 'bridge-state.json');
 try { mkdirSync(DATA_DIR, { recursive: true }); } catch { /* ignore */ }
 
 // Friendly names layer: address token ("1A.0.0" / "1A.0" / "1A") -> human name.
-// Editable in the UI, persisted to data/labels.json. Seeded with the few names
-// the original parser source documents plus the live-verified HWR devices.
-const LABELS_SEED = {
-  'trigger:8': 'Zeit – jede Minute (Zeitschaltuhr)',
-  '1A': 'Hauswirtschaftsraum (HWR)',
-  '1A.0.0': 'HWR Licht (Relais)',
-  '1A.0.6': 'HWR Taster',
-  '41.0.5': 'Licht hinter Garage',
-  '40.0.4': 'Licht unter Carport',
-  '30.0.1': 'Zirkulationspumpe Warmwasser HWR unten',
-};
+// Editable in the UI, persisted to data/labels.json. Die Startwerte
+// (LABEL_SEED in src/moduleinfo.js) sind aus dem Reverse-Engineering und den
+// Original-Logs belegt.
 function loadLabels() {
-  try { if (existsSync(LABELS_JSON)) return JSON.parse(readFileSync(LABELS_JSON, 'utf8')); } catch { /* ignore */ }
-  return { ...LABELS_SEED };
+  // Seeds füllen nur Lücken — eigene Namen des Nutzers gewinnen immer. (Vorher
+  // kamen neue Seeds nie an, sobald data/labels.json einmal existierte.)
+  try {
+    if (existsSync(LABELS_JSON)) return { ...LABEL_SEED, ...JSON.parse(readFileSync(LABELS_JSON, 'utf8')) };
+  } catch { /* ignore */ }
+  return { ...LABEL_SEED };
 }
 function saveLabels(map) {
   try {
@@ -136,8 +133,9 @@ let ruleIndex = new Map();
 
 function rebuildEntities() {
   ruleIndex = buildIndex(rulebase);
-  entities = mergeOverrides(deriveEntities(rulebase, { labels, modules: discoveredModules }),
-                            entityOverrides, { labels });
+  entities = mergeOverrides(
+    deriveEntities(rulebase, { labels, modules: discoveredModules, hardware: entityOverrides.hardware }),
+    entityOverrides, { labels });
   bridge.setEntities(entities);
   ha.setEntities(entities, entityOverrides);
   publishSystem();
@@ -735,8 +733,11 @@ app.get('/api/entities', (req, res) => {
     mode: haMode,
     count: entities.length,
     enabled: entities.filter((e) => e.enabled !== false).length,
-    entities: entities.map((e) => ({ ...e, state: bridge.stateOf(e) })),
+    entities: entities.map((e) => ({ ...e, state: bridge.stateOf(e),
+                                     hardware: moduleInfo(e.module, entityOverrides.hardware || {}) })),
     overrides: entityOverrides,
+    hardware: { ...MODULE_TYPES, ...(entityOverrides.hardware || {}) },
+    subRoles: SUB_ROLES,
     mqtt: ha.status(),
   });
 });
@@ -749,6 +750,7 @@ app.put('/api/entities', (req, res) => {
     entities: body.entities && typeof body.entities === 'object' ? body.entities : (entityOverrides.entities || {}),
     modules: body.modules && typeof body.modules === 'object' ? body.modules : (entityOverrides.modules || {}),
     areas: body.areas && typeof body.areas === 'object' ? body.areas : (entityOverrides.areas || {}),
+    hardware: body.hardware && typeof body.hardware === 'object' ? body.hardware : (entityOverrides.hardware || {}),
   };
   writeJson(ENTITIES_JSON, entityOverrides);
   rebuildEntities();

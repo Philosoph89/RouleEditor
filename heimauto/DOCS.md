@@ -102,6 +102,7 @@ einem Modulausgang hängt (ein Poll beantwortet nur die Eingänge):
 | `light` mit Helligkeit | Dimmer-Protokoll `M.3` (Pegel 0…0x40) + `M.4` (`$30` Pegel setzen, `$17/$15` heller/dunkler, `$10` Stopp) |
 | `switch` / `light` | jedes weitere zugewiesene Bit von Sub 0 (Relaiskontakte) |
 | `binary_sensor` | die Eingänge: jeder Auslöser der Regelbasis mit Sub 0 oder ≥ 2 (Sub 1 sind Timer-Ablaufevents, keine Taster) |
+| `fan` / `number` | ein Stufenregister, das die Regeln um eine feste Schrittweite hoch-/runterzählen. Die **Lüftung** der Anlage ist genau das: `1C.0` mit 16 Stufen à 0x11 (`1C.0 += $11` / `-= $11`), bedient von zwei Tasterpaaren. Klingt der Name nach Lüftung, wird ein `fan` mit Stufen-Slider daraus, sonst ein `number`. |
 
 Aus der gelieferten `RouleBase.hrb` ergibt das **20 Jalousien, 15 Dimmer,
 ~40 Schalter/Lichter und 114 Taster** (238 erkannt, 190 gemeldet). Merkerbits
@@ -110,6 +111,20 @@ aber standardmäßig **nicht** gemeldet.
 
 Zusätzlich meldet sich das Add-on selbst als Gerät *Heimauto HomeBus Master* mit
 den Diagnose-Entitäten „HomeBus Polling", „HomeBus Module" und „Betriebsart".
+
+Jedes Modul erscheint in Home Assistant mit seinem echten Hardwaretyp
+(`HomeBus-Dimmer V1.6`, `HomeBus-Relais V1.3`, `HomeBus-Analog V1.3`) — die Liste
+stammt aus dem ModulListe-Tab des Originals (`src/moduleinfo.js`) und lässt sich
+über `data/entities.json` (`hardware`) ergänzen.
+
+**Stufen-LEDs:** Sub 1 jedes Moduls treibt die Status-LEDs der Taster. Bei der
+Lüftung schreibt die Bridge das komplette LED-Muster der erreichten Stufe mit
+(16 Stufen × 8 Bytes, aus der Regelbasis abgeleitet und gegen ein Original-Log
+byte-genau geprüft) — sonst zeigt die Wand im HA-Betrieb dauerhaft die falsche
+Stufe. Nebenbei aufgefallen: die Original-Konfiguration hat hier einen Fehler in
+**einem** der vier Taster (Flur OG „niedriger" zeigt bei zwei Stufen das falsche
+Muster). Die Bridge nimmt die Mehrheitsvariante und ist damit korrekter als das
+Original; die Abweichung steht als `indicatorConflicts` an der Entität.
 
 ### Zuordnen: welcher Taster ist das?
 

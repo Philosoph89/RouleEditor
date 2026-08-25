@@ -291,3 +291,29 @@ es sofort an.
 Ablauf in der Praxis: Tab öffnen → „Zuordnung starten" → an der Wand drücken →
 Name tippen → Enter. Der Klarname gilt sofort im Automationen-Tab, in der
 Entitätenliste und in Home Assistant.
+
+### Hardware-Inventar + Lüftung (aus Original-ModulListe und -Logs, 2026-08-25)
+
+Zwei Datenquellen vom Nutzer: der Tab **ModulListe** des Originals (Screenshot)
+und zwei **Original-Logs** ("Lüftung oben/unten 15x hoch und 15x runter").
+
+| Erkenntnis | Status | Nachweis |
+|------------|--------|----------|
+| **Hardware je Modul** (25 Module: 17 Dimmer, 7 Relais, 1 Analog, mit Version + Stand) | ✅ | `src/moduleinfo.js`; erscheint in Home Assistant als Gerätemodell (`HomeBus-Dimmer V1.6`) und `sw_version` |
+| Gegenprobe: jedes per Dimmer-Protokoll angesteuerte Modul **ist** Dimmer-Hardware | ✅ | 15 von 15; umgekehrt nicht — 16 und 18 sind Dimmer, die alte Konfiguration nutzt nur ihre Jalousie-Bits |
+| Brachliegende Dimmer-Kanäle als Vorschlag (abgeschaltet) | ✅ | `light_16_dim`, `light_18_dim`, `hardwareOnly: true` |
+| **Sub-1 = Status-LEDs der Taster** (nicht Merker) | ✅ | Log-Kopf + 8 Module × Sub 1 pro Stufenwechsel; `SUB_ROLES` |
+| **Lüftung = Stufenregister `1C.0`**, 16 Stufen à 0x11 (0x00…0xFF) | ✅ | Log: `1C.0 <- 11,22,…,EE`; Regeln `1C.0 < $FF ; 1C.0 += $11` bzw. `> $00 ; -= $11` |
+| Zwei Bedienstellen für **eine** Lüftung | ✅ | Wohnzimmer `1B.0.7/1B.0.6`, Flur OG `31.0.1/31.0.0` — beide schreiben dasselbe Register |
+| Beide Tasten zusammen = Maximum / Aus | ✅ | `1C.0 := $FF` bzw. `:= $00` |
+| Erster Druck nach Pause **armiert** nur (`31.7.0`/`1B.7.0`, Rückfall über `LT9 := 2` min) | 🟡 | im Log sichtbar (15 Drücke → 14 Stufen); die Zuordnung des LT9-Ablaufs ist ungeprüft |
+| **Stufen-LED-Tabelle** (16 Stufen × 8 Ausgangsbytes) aus der Regelbasis | ✅ | byte-genau gegen das Log; die Bridge schreibt sie im HA-Betrieb mit, sonst zeigt die Wand die falsche Stufe |
+| Lüftung als HA-`fan` mit Stufen-Slider, Betriebsart-Wähler `1C.7` als `number` | ✅ | `speed_range 1..15`; `1C.7` = 8 Stellungen mit Rundlauf (`> $07 ; := $00`) |
+| **Fehler in der Original-Konfiguration gefunden** | ✅ | Taster `0x1880` („Flur OG niedriger") schreibt bei Stufe 0x22 und 0x00 ein falsches LED-Muster (31.1 = 0x70 statt 0xF0 bzw. 0x30) — im Log sichtbar. Die Bridge nimmt die Mehrheitsvariante (3 von 4 Tastern) und meldet die Abweichung als `indicatorConflicts` |
+| **Bug in unserem Interpreter gefunden und behoben** | ✅ | Nicht registrierte Module zeigen originalgetreu auf Slot 0 → acht LED-Module teilten sich einen Speicher und meldeten alle 0xF5. `setModules` registriert jetzt vorab (Kontext 0x00 zuerst, damit der Auffang-Slot ihm gehört). Regression in `test/statesync.test.js` |
+| Gegenprobe über den **Interpreter**: 14 Stufen × 8 LED-Bytes gegen das Log | ✅ | `test/lueftung.test.js`, Fixture `test/fixtures/lueftung-oben.log` |
+
+**Was das Log über das Protokoll verrät:** `SysMsg <MM><S>` ist die
+Änderungsmeldung „Modul MM, Sub S hat einen neuen Wert" (`AddChgMsg`) — direkt
+danach stehen genau diese `Tx-Data: (MM.S) <- VV`-Zeilen. Das bestätigt das
+Änderungsflag-Modell aus Stufe 2/3 an einer zweiten, unabhängigen Stelle.

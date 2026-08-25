@@ -89,6 +89,55 @@ test('discovery, command and state travel over a real broker', async (t) => {
   await waitFor(() => seen.has('homeassistant/light/heimauto/light_1a_0_0/config'));
 });
 
+test('die Lüftung erscheint als fan und lässt sich stufenweise stellen', async (t) => {
+  const { readFileSync } = await import('node:fs');
+  const { RuleBase } = await import('../src/hrb.js');
+  const { deriveEntities, mergeOverrides } = await import('../src/entities.js');
+  const { LABEL_SEED } = await import('../src/moduleinfo.js');
+  const rb = RuleBase.fromBuffer(readFileSync(new URL('../../RouleBase.hrb', import.meta.url)));
+  const fan = mergeOverrides(deriveEntities(rb, { labels: LABEL_SEED }), {}, { labels: LABEL_SEED })
+    .find((e) => e.id === 'level_1c_0');
+
+  const { aedes, server, port } = await startBroker();
+  const sent = [];
+  const bridge = new Bridge({ queueOutput: (M, sub, val) => sent.push({ M, sub, val }) });
+  bridge.setEntities([fan]);
+  const ha = new HaMqtt(bridge);
+  ha.setEntities([fan]);
+  bridge.onState = (e, st) => ha.publishState(e, st);
+
+  const seen = new Map();
+  const hass = mqtt.connect(`mqtt://127.0.0.1:${port}`);
+  await new Promise((r) => hass.once('connect', r));
+  hass.subscribe(['homeassistant/#', 'heimauto/#']);
+  hass.on('message', (topic, payload) => seen.set(topic, payload.toString()));
+  t.after(async () => {
+    await ha.disconnect();
+    await new Promise((r) => hass.end(true, {}, r));
+    await new Promise((r) => server.close(r));
+    await new Promise((r) => aedes.close(r));
+  });
+
+  await ha.connect({ host: '127.0.0.1', port });
+  await waitFor(() => seen.has('homeassistant/fan/heimauto/level_1c_0/config'));
+  const cfg = JSON.parse(seen.get('homeassistant/fan/heimauto/level_1c_0/config'));
+  assert.equal(cfg.name, 'Lüftung');
+  assert.equal(cfg.speed_range_min, 1);
+  assert.equal(cfg.speed_range_max, 15, '15 Stufen über null');
+  assert.equal(cfg.percentage_command_topic, 'heimauto/level_1c_0/set_percentage');
+  assert.equal(cfg.device.model, 'HomeBus-Analog V1.3', 'Hardwaretyp aus der ModulListe');
+
+  // Home Assistant stellt Stufe 8 -> Register 0x88 + LED-Muster
+  hass.publish('heimauto/level_1c_0/set_percentage', '8');
+  await waitFor(() => sent.some((s) => s.M === 0x1c && s.val === 0x88));
+  await waitFor(() => seen.get('heimauto/level_1c_0/percentage') === '8');
+  assert.equal(bridge.getByte(0x31, 1), 0x3f, 'die Stufen-LEDs sind mitgeschrieben');
+
+  hass.publish('heimauto/level_1c_0/set', 'OFF');
+  await waitFor(() => sent.some((s) => s.M === 0x1c && s.val === 0x00));
+  await waitFor(() => seen.get('heimauto/level_1c_0/state') === 'OFF');
+});
+
 test('disabling an entity removes it from Home Assistant', async (t) => {
   const { aedes, server, port } = await startBroker();
   const bridge = new Bridge({ queueOutput: () => {} });

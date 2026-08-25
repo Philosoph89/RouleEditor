@@ -5,9 +5,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { RuleBase } from '../src/hrb.js';
 import { deriveEntities, mergeOverrides, DIM } from '../src/entities.js';
+import { MODULE_TYPES } from '../src/moduleinfo.js';
 
 const rb = RuleBase.fromBuffer(readFileSync(new URL('../../RouleBase.hrb', import.meta.url)));
-const labels = { '1A.0.0': 'HWR Licht (Relais)', '41.0.5': 'Licht hinter Garage' };
+import { LABEL_SEED } from '../src/moduleinfo.js';
+const labels = { ...LABEL_SEED };
 const all = () => mergeOverrides(deriveEntities(rb, { labels }), {});
 const byId = (id) => all().find((e) => e.id === id);
 
@@ -111,8 +113,25 @@ test('the derived registry covers the whole plant', () => {
   const kinds = {};
   for (const e of list) kinds[e.kind] = (kinds[e.kind] || 0) + 1;
   assert.equal(kinds.cover, 20, '20 shutters');
-  assert.equal(kinds.dimmer, 15, '15 dimmer channels');
   assert.ok(kinds.button > 100, 'over 100 physical inputs');
   assert.ok(kinds.switch + kinds.light > 40, 'relay outputs');
+  assert.equal(kinds.fan, 1, 'die Lüftung (1C.0, 16 Stufen)');
+  assert.equal(kinds.level, 1, 'der Betriebsart-Wähler (1C.7, 8 Stellungen)');
   assert.equal(DIM.APPLY, 0x30);
+});
+
+test('15 Dimmer nutzt die Regelbasis, 2 weitere sind nur Hardware', () => {
+  // Laut ModulListe des Originals sind 17 Module Dimmer-Hardware; bei 16 und 18
+  // benutzt die alte Konfiguration nur die Sub-0-Bits (Jalousien).
+  const dim = all().filter((e) => e.kind === 'dimmer');
+  const used = dim.filter((e) => !e.hardwareOnly);
+  const spare = dim.filter((e) => e.hardwareOnly);
+  assert.equal(used.length, 15);
+  assert.deepEqual(spare.map((e) => e.module).sort((a, b) => a - b), [0x16, 0x18]);
+  assert.equal(spare.every((e) => e.enabled === false), true,
+    'brachliegende Hardware wird nicht ungefragt gemeldet');
+  for (const e of used) {
+    assert.equal(MODULE_TYPES[e.module.toString(16).toUpperCase()].type, 'Dimmer',
+      `Modul ${e.module.toString(16)} muss laut Hardware ein Dimmer sein`);
+  }
 });

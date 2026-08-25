@@ -31,8 +31,30 @@ export class LiveController {
     this.windowMs = 200;
   }
 
-  setModules(addrs) { this.modules = (addrs || []).slice(); }
-  setInterpreter(it) { this.it = it; this.stable.clear(); }
+  setModules(addrs) {
+    this.modules = (addrs || []).slice();
+    // Bekannte Module SOFORT registrieren, nicht erst wenn sie antworten.
+    // Die Modul-Map bildet unbekannte Adressen originalgetreu auf Slot 0 ab —
+    // schreibt eine Regel dann in ein noch nicht registriertes Modul, landen
+    // mehrere Module im selben Speicher. Beim Lüftungs-Tastendruck (Regeln
+    // schreiben Status-LEDs in acht Module) meldeten dadurch alle acht denselben
+    // Wert 0xF5 statt ihrer eigenen Bytes.
+    // CTX zuerst: unbekannte Adressen zeigen originalgetreu auf Slot 0, also
+    // muss dort der Kontext liegen und nicht ein echtes Modul — sonst
+    // beschmutzen Schreibvorgänge in unbekannte Module dessen Speicher.
+    if (this.it) {
+      this.it.state.register(CTX);
+      for (const m of this.modules) this.it.state.register(m & 0xff);
+    }
+  }
+  setInterpreter(it) {
+    this.it = it;
+    this.stable.clear();
+    if (it) {
+      it.state.register(CTX);
+      for (const m of this.modules) it.state.register(m & 0xff);
+    }
+  }
 
   feed(bytes) {
     for (const b of bytes) this.buf.push(b);

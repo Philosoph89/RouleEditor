@@ -16,8 +16,9 @@ const J = (body, method = 'POST') => ({ method, headers: { 'content-type': 'appl
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hx2 = (n) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');
 
-const KIND_LABEL = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter', button: 'Taster' };
-const KINDS = ['cover', 'dimmer', 'light', 'switch', 'button'];
+const KIND_LABEL = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter',
+                     button: 'Taster', fan: 'Lüftung (Stufen)', level: 'Stufenschalter' };
+const KINDS = ['cover', 'dimmer', 'light', 'switch', 'button', 'fan', 'level'];
 
 let ENT = [];
 let OVERRIDES = { entities: {}, modules: {}, areas: {} };
@@ -27,6 +28,7 @@ function addr(e) {
   const m = hx2(e.module);
   if (e.kind === 'dimmer') return `${m}.${e.levelSub}/${e.cmdSub}`;
   if (e.kind === 'cover') return `${m}.${e.sub}.${e.bitDir}/${e.bitRun}`;
+  if (e.kind === 'fan' || e.kind === 'level') return `${m}.${e.sub}`;
   return `${m}.${e.sub}.${e.bit}`;
 }
 
@@ -35,6 +37,7 @@ function stateText(e) {
   if (!s) return '–';
   if (e.kind === 'cover') return `${s.state} ${s.position}%`;
   if (e.kind === 'dimmer') return `${s.state} ${Math.round((s.brightness / 255) * 100)}%`;
+  if (e.kind === 'fan' || e.kind === 'level') return `Stufe ${s.level} / ${s.steps - 1}`;
   return s.state;
 }
 
@@ -45,6 +48,9 @@ function testButtons(e) {
   }
   if (e.kind === 'dimmer') {
     return `<button class="mini" data-cmd='{"state":"ON","brightness":255}'>100%</button><button class="mini" data-cmd='{"state":"ON","brightness":128}'>50%</button><button class="mini" data-cmd='{"state":"OFF"}'>aus</button>`;
+  }
+  if (e.kind === 'fan' || e.kind === 'level') {
+    return `<button class="mini" data-cmd='{"step":-1}'>−</button><button class="mini" data-cmd='{"step":1}'>+</button><button class="mini" data-cmd="OFF">aus</button><button class="mini" data-cmd="ON">max</button>`;
   }
   return `<button class="mini" data-cmd="ON">ein</button><button class="mini" data-cmd="OFF">aus</button>`;
 }
@@ -63,11 +69,17 @@ function render() {
   $('#entTable tbody').innerHTML = rows.map((e) => `
     <tr data-id="${e.id}" class="${e.enabled === false ? 'off' : ''}">
       <td><input type="checkbox" data-f="enabled" ${e.enabled === false ? '' : 'checked'} /></td>
-      <td><code>${addr(e)}</code>${e.internal ? ' <span class="tag" title="Merker der Regelbasis, kein physischer Ausgang">Merker</span>' : ''}${e.online === false ? ' <span class="tag warn" title="Modul antwortet nicht">offline</span>' : ''}</td>
+      <td><code>${addr(e)}</code>
+        ${e.hardware ? `<span class="tag" title="${esc(e.hardware.type)} ${esc(e.hardware.version)}, Stand ${esc(e.hardware.date)}">${esc(e.hardware.type)}</span>` : ''}
+        ${e.sub === 1 ? ' <span class="tag" title="Sub 1 sind die Status-LEDs der Taster">LED</span>' : ''}
+        ${e.internal && e.sub !== 1 ? ' <span class="tag" title="Merker der Regelbasis, kein physischer Ausgang">Merker</span>' : ''}
+        ${e.hardwareOnly ? ' <span class="tag" title="Laut Hardware vorhanden, von der alten Konfiguration nicht genutzt">ungenutzt</span>' : ''}
+        ${e.online === false ? ' <span class="tag warn" title="Modul antwortet nicht">offline</span>' : ''}</td>
       <td><select data-f="kind">${KINDS.map((k) => `<option value="${k}" ${k === e.kind ? 'selected' : ''}>${KIND_LABEL[k]}</option>`).join('')}</select></td>
       <td><input data-f="name" value="${esc(e.name)}" /></td>
       <td><input data-f="area" value="${esc(e.area || '')}" placeholder="z. B. Küche" /></td>
-      <td>${e.kind === 'cover' ? `<input data-f="travelSec" type="number" min="1" max="300" value="${e.travelSec || 30}" class="tiny" />` : ''}</td>
+      <td>${e.kind === 'cover' ? `<input data-f="travelSec" type="number" min="1" max="300" value="${e.travelSec || 30}" class="tiny" />`
+            : (e.kind === 'fan' || e.kind === 'level') ? `<span class="muted small">${e.steps} Stufen</span>` : ''}</td>
       <td class="st">${esc(stateText(e))}</td>
       <td>${testButtons(e)}</td>
     </tr>`).join('') || '<tr><td colspan="8" class="muted">keine Treffer</td></tr>';
