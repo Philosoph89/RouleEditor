@@ -20,6 +20,7 @@
     <button data-tab="settings" class="active">Einstellungen</button>
     <button data-tab="automations">Automationen</button>
     <button data-tab="ha">Home Assistant</button>
+    <button data-tab="ident">Live-Zuordnung</button>
     <button data-tab="editor">Editor (Experte)</button>
     <button data-tab="monitor">Monitor</button>
     <button data-tab="simulator">Simulator</button>
@@ -138,6 +139,31 @@
       <pre id="haLog" class="log"></pre>
     </section>
 
+
+    <!-- ==================== LIVE-ZUORDNUNG ==================== -->
+    <section id="tab-ident" class="tab">
+      <div class="row">
+        <button id="btnIdentStart">Zuordnung starten</button>
+        <button id="btnIdentStop" class="secondary">Stopp</button>
+        <label class="check"><input id="identOnlyUnknown" type="checkbox" /> nur unbenannte zeigen</label>
+        <label class="check"><input id="identSound" type="checkbox" /> Ton bei Erkennung</label>
+        <span class="grow"></span>
+        <button id="btnIdentClear" class="secondary">Verlauf leeren</button>
+        <span id="identInfo" class="muted"></span>
+      </div>
+      <p class="hint">Einen Taster an der Wand drücken — hier erscheint sofort, welche Adresse
+        das ist, wie sie heißt, welche Entität dazugehört und was die Original-Konfiguration
+        damit macht. Name eintragen und <b>Enter</b> drücken: der Klarname gilt sofort
+        überall (Automationen, Entitätenliste, Home Assistant).</p>
+
+      <div id="identCard" class="ident-card empty">
+        <div class="ident-empty">Warte auf einen Eingang…</div>
+      </div>
+
+      <h2>Verlauf</h2>
+      <div id="identHistory" class="ident-history"></div>
+    </section>
+
     <!-- ==================== EDITOR ==================== -->
     <section id="tab-editor" class="tab">
       <h2>Regelbasis</h2>
@@ -250,5 +276,6 @@
   <script type="module" src="app.js"></script>
   <script type="module" src="automations.js"></script>
   <script type="module" src="ha.js"></script>
+  <script type="module" src="identify.js"></script>
 </body>
 </html>

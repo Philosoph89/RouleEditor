@@ -265,3 +265,29 @@ mitbenutzt (ein Bit, das „Licht" heißt, wird ein `light` statt eines `switch`
 (Event-Key 8) müssen im `bridge`-Modus als HA-Automationen nachgebaut werden;
 Dimmer-Rampe („heller, solange gedrückt") ist über MQTT nur als absoluter Pegel
 abgebildet (`dimRamp()` existiert, ist aber nicht als HA-Entität gemeldet).
+
+### Live-Zuordnung (Tab „Live-Zuordnung", 2026-08-25)
+
+Das Problem aus dem ersten Praxistest: 150+ Entitäten sind in der Liste
+theoretisch zuzuordnen, praktisch aber nicht — man müsste alle im Blick behalten.
+Lösung: zu **jedem** eingehenden Bitwechsel schickt der Server ein
+`ident`-Ereignis mit allem, was über die Adresse bekannt ist, und die Karte zeigt
+es sofort an.
+
+| Baustein | Status | Nachweis |
+|----------|--------|----------|
+| `src/identify.js`: Event-Key → Regelketten-Index | ✅ | 578 Ketten indiziert, keine geht verloren; `test/identify.test.js` |
+| Eingangskarte: Adresse, Klarname, Entität, Event-Key, WENN/DANN-Ketten | ✅ | HWR-Taster `1A.0.6` → Event-Key `0xD06` → „HWR Licht (Relais)" |
+| Ausgangsgeräte der Ketten aufgelöst (auch auf FREMDE Module) | ✅ | Küchentaster `12.0.7` → Dimmer auf Modul `0x11` |
+| Jalousie erscheint als **ein** Gerät, nicht als zwei Bits | ✅ | `19.0.0`/`19.0.1` → `cover_19_0_0` |
+| **Relative Adressen** (`00.x.y`) auf das auslösende Modul aufgelöst | ✅ | Test über mehrere Module: kein Ziel bleibt auf Modul `00` |
+| Bei gelaufenen Regeln: geschaltete Geräte **mit Zustand** | ✅ | `1A.0 = 0x01` → „HWR Licht: EIN"; `19.0 = 0x02` → „fährt zu"; Dimmer → „Pegel 100 %" |
+| **Bit-Maske der angefassten Ziele** | ✅ | ohne sie meldete ein Byte-Ausgang alle Geräte des Bytes — beim Dimmertaster erschien die Jalousie desselben Moduls als „Stopp" |
+| Sofort-Benennung (Name + Bereich, Enter) wirkt überall | ✅ | schreibt `labels.json`, löst Neuableitung aus, sendet Discovery neu |
+| **Adressen ohne Regel-Auslöser als Entität anlegen** | ✅ | `12.0.4` ist ein echter Taster, kommt aber in keiner Regel vor → „an HA melden" erzeugt einen `binary_sensor` (`entities.json`, `source: manual`) |
+| Verlauf (30 Einträge), Filter „nur unbenannte", Ton, Tab-Marker | ✅ | im Browser gegen simulierte Modulantworten geprüft |
+| `POST /api/bus/modules` — Modulliste ohne Scan setzen | ✅ | nötig am MOCK-Port (dort „antwortet" jede Adresse) und praktisch zum Pinnen |
+
+Ablauf in der Praxis: Tab öffnen → „Zuordnung starten" → an der Wand drücken →
+Name tippen → Enter. Der Klarname gilt sofort im Automationen-Tab, in der
+Entitätenliste und in Home Assistant.

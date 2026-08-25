@@ -84,6 +84,22 @@ test('overrides win over the derivation and can enable a flag bit', () => {
   assert.equal(cov.name, 'Rolladen HWR');
 });
 
+test('a hand-added entity for an address the rules never use gets a name', () => {
+  // 12.0.4 ist ein echter Taster, kommt aber in der Regelbasis nicht als
+  // Auslöser vor — die Zuordnungskarte legt ihn von Hand an.
+  const ov = { entities: { input_12_0_4: { kind: 'button', module: 0x12, sub: 0, bit: 4,
+                                           enabled: true, source: 'manual', area: 'Küche' } } };
+  const withLabel = mergeOverrides(deriveEntities(rb, { labels }), ov,
+                                   { labels: { ...labels, '12.0.4': 'Taster Küche Ost' } });
+  const e = withLabel.find((x) => x.id === 'input_12_0_4');
+  assert.equal(e.name, 'Taster Küche Ost', 'Klarname kommt aus der Label-Schicht');
+  assert.equal(e.area, 'Küche');
+  assert.equal(e.enabled, true);
+  // ohne Klarnamen darf der Name nicht leer bleiben
+  const noLabel = mergeOverrides(deriveEntities(rb, { labels }), ov, { labels });
+  assert.equal(noLabel.find((x) => x.id === 'input_12_0_4').name, 'Taster 12.0.4');
+});
+
 test('every entity of a real plant module is marked online, unknown ones not', () => {
   const list = mergeOverrides(deriveEntities(rb, { labels, modules: [0x19] }), {});
   assert.equal(list.find((e) => e.id === 'cover_19_0_0').online, true);

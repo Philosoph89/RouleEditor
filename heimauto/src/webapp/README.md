@@ -31,6 +31,7 @@ npm test           # verifiziert den .hrb-Codec gegen ../RouleBase.hrb
 | RS-232 RX/TX                 | **Monitor** — Live-Empfang/Sendung (WebSocket), Hex-Senden |
 | `TSimulationForm`            | **Simulator** — Regelbasis softwareseitig ausführen, Modul-/Timer-Zustände, Ereignis-Log |
 | *(neu)*                      | **Home Assistant** — Betriebsart, MQTT-Broker, Entitätenliste (melden/Typ/Name/Bereich/Laufzeit, Testknöpfe) |
+| *(neu)*                      | **Live-Zuordnung** — Taster drücken → Adresse, Entität, Regelketten und geschaltete Geräte sofort sehen, Klarname direkt vergeben |
 
 ### Erweiterungen gegenüber dem Original
 - **Frei konfigurierbare Schnittstelle:** statt fester Liste `COM1..COM8` werden
@@ -84,6 +85,7 @@ webapp/
     entities.js          Entitäten aus der Regelbasis ableiten (Jalousie/Dimmer/Schalter/Taster)
     bridge.js            Entität ↔ HomeBus-Ausgangsbyte, Jalousie-Laufzeit, Eingangszustände
     hamqtt.js            MQTT-Discovery + Kommando-Abonnements für Home Assistant
+    identify.js          Live-Zuordnung: Eingangsadresse → Name, Entität, Regelketten, Ausgangsgeräte
     simulator.js         Zustandsmodell (48×16 Module, ST/LT/DT) + Regel-Engine
   public/                index.html · style.css · app.js (Vanilla-ES-Module, kein Build)
   test/hrb.test.js       node:test, prüft Round-Trip & Prüfsumme

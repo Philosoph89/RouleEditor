@@ -202,3 +202,44 @@ button.accent { outline: 2px solid #e2b341; }
 .tag.warn { background: rgba(226, 84, 65, .3); }
 .ok { color: #4fbf7b; }
 #haLog { max-height: 180px; overflow: auto; }
+
+/* ---- Live-Zuordnung ---- */
+.ident-card { border: 1px solid rgba(128,128,128,.3); border-radius: 8px; padding: 12px 14px; margin: 10px 0 18px; background: rgba(128,128,128,.06); }
+.ident-card.empty { text-align: center; color: #8b93a1; padding: 28px; }
+.ident-card.flash { animation: identflash .4s ease-out; }
+@keyframes identflash { from { background: rgba(79,191,123,.28); } to { background: rgba(128,128,128,.06); } }
+.ident-top { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.ident-addr { display: flex; flex-direction: column; gap: 3px; }
+code.big { font-size: 22px; font-weight: 600; letter-spacing: .5px; }
+.ident-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; width: fit-content; }
+.ident-badge.on { background: rgba(79,191,123,.28); color: #7ee2a8; }
+.ident-badge.off { background: rgba(128,128,128,.25); }
+.ident-name { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ident-name #identName { min-width: 260px; }
+.ident-name #identArea { min-width: 120px; }
+.ident-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.ident-body h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #8b93a1; }
+.devs { display: flex; flex-direction: column; gap: 4px; }
+.dev { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.dev.unknown code { opacity: .7; }
+.ident-chains { margin-top: 12px; }
+.ident-chains summary { cursor: pointer; color: #8b93a1; font-size: 13px; }
+.chain { border-left: 2px solid rgba(128,128,128,.35); padding: 4px 0 4px 10px; margin: 8px 0; font-size: 13px; }
+.chain-head { font-size: 11px; color: #8b93a1; }
+.chain-when, .chain-then { margin-top: 2px; }
+.chain-then b { color: #e2b341; }
+.ident-history { max-height: 46vh; overflow: auto; border: 1px solid rgba(128,128,128,.25); border-radius: 6px; }
+.hist-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 8px; border-bottom: 1px solid rgba(128,128,128,.15); cursor: pointer; font-size: 13px; }
+.hist-row:hover { background: rgba(128,128,128,.12); }
+.hist-row.unknown { border-left: 3px solid #e2b341; }
+.hist-time { color: #8b93a1; font-variant-numeric: tabular-nums; font-size: 12px; }
+.hist-name { min-width: 160px; }
+.hist-badge.on { color: #7ee2a8; }
+.hist-badge.off { color: #8b93a1; }
+@media (max-width: 780px) { .ident-body { grid-template-columns: 1fr; } }
+.state { font-size: 11px; padding: 0 6px; border-radius: 3px; }
+.state.on { background: rgba(79,191,123,.25); color: #7ee2a8; }
+.state.off { background: rgba(128,128,128,.22); }
+#tabs button.has-news::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 6px;
+  border-radius: 50%; background: #4fbf7b; vertical-align: middle; animation: newspulse 1.2s ease-in-out infinite; }
+@keyframes newspulse { 50% { opacity: .35; } }

@@ -27,29 +27,43 @@ export HEIMAUTO_SCAN_START="$(bashio::config 'scan_start')"
 export HEIMAUTO_SCAN_END="$(bashio::config 'scan_end')"
 
 # ---- MQTT ------------------------------------------------------------------
-MQTT_HOST="$(bashio::config 'mqtt_host')"
-MQTT_PORT="$(bashio::config 'mqtt_port')"
-MQTT_USER="$(bashio::config 'mqtt_user')"
-MQTT_PASS="$(bashio::config 'mqtt_password')"
+# Feldweises Zusammenführen: was in den Optionen steht, gewinnt; alles Leere
+# füllt der Home-Assistant-mqtt-Dienst (Mosquitto-Add-on) auf. Vorher wurden
+# eigene Zugangsdaten überschrieben, sobald mqtt_host leer blieb.
+opt() {
+  local v
+  v="$(bashio::config "$1")"
+  if [ "${v}" = "null" ]; then v=""; fi
+  printf '%s' "${v}"
+}
 
-if bashio::var.is_empty "${MQTT_HOST}" || [ "${MQTT_HOST}" = "null" ]; then
-  if bashio::services.available "mqtt"; then
-    MQTT_HOST="$(bashio::services mqtt 'host')"
-    MQTT_PORT="$(bashio::services mqtt 'port')"
+MQTT_HOST="$(opt 'mqtt_host')"
+MQTT_PORT="$(opt 'mqtt_port')"
+MQTT_USER="$(opt 'mqtt_user')"
+MQTT_PASS="$(opt 'mqtt_password')"
+
+if bashio::services.available "mqtt"; then
+  [ -z "${MQTT_HOST}" ] && MQTT_HOST="$(bashio::services mqtt 'host')"
+  [ -z "${MQTT_PORT}" ] && MQTT_PORT="$(bashio::services mqtt 'port')"
+  if [ -z "${MQTT_USER}" ] && [ -z "${MQTT_PASS}" ]; then
+    # Nur zusammen übernehmen — ein halber Datensatz ergibt keinen Login.
     MQTT_USER="$(bashio::services mqtt 'username')"
     MQTT_PASS="$(bashio::services mqtt 'password')"
-    bashio::log.info "MQTT-Broker aus dem Home-Assistant-Dienst übernommen: ${MQTT_HOST}:${MQTT_PORT}"
-  else
-    bashio::log.warning "Kein MQTT-Broker konfiguriert und kein mqtt-Dienst verfügbar."
-    bashio::log.warning "Mosquitto-Add-on installieren oder mqtt_host in den Optionen setzen."
+    bashio::log.info "MQTT-Zugangsdaten aus dem Home-Assistant-Dienst übernommen (kein eigener Benutzer nötig)."
   fi
+  bashio::log.info "MQTT-Broker: ${MQTT_HOST}:${MQTT_PORT:-1883}"
+elif [ -n "${MQTT_HOST}" ]; then
+  bashio::log.info "MQTT-Broker aus den Add-on-Optionen: ${MQTT_HOST}:${MQTT_PORT:-1883}"
+else
+  bashio::log.warning "Kein MQTT-Broker konfiguriert und kein mqtt-Dienst verfügbar."
+  bashio::log.warning "Mosquitto-Add-on installieren oder mqtt_host in den Optionen setzen."
 fi
 
-if bashio::var.has_value "${MQTT_HOST}" && [ "${MQTT_HOST}" != "null" ]; then
+if [ -n "${MQTT_HOST}" ]; then
   export HEIMAUTO_MQTT_HOST="${MQTT_HOST}"
   export HEIMAUTO_MQTT_PORT="${MQTT_PORT:-1883}"
-  [ "${MQTT_USER}" != "null" ] && export HEIMAUTO_MQTT_USER="${MQTT_USER}"
-  [ "${MQTT_PASS}" != "null" ] && export HEIMAUTO_MQTT_PASS="${MQTT_PASS}"
+  if [ -n "${MQTT_USER}" ]; then export HEIMAUTO_MQTT_USER="${MQTT_USER}"; fi
+  if [ -n "${MQTT_PASS}" ]; then export HEIMAUTO_MQTT_PASS="${MQTT_PASS}"; fi
 fi
 export HEIMAUTO_MQTT_BASE="$(bashio::config 'mqtt_base')"
 export HEIMAUTO_MQTT_PREFIX="$(bashio::config 'discovery_prefix')"

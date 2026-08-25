@@ -23,6 +23,7 @@ import { COMMANDS, OPERATORS, FAMILIES, RANGES, SYNTAX, DST_KEYWORDS, SRC_FORMS,
 import { decode as decodeRuleExact, encode as encodeRuleExact, compileText, compileLine } from './src/compiler.js';
 import { buildModel, applyModel, decodeTrigger, triggerGroupId } from './src/model.js';
 import { deriveEntities, mergeOverrides } from './src/entities.js';
+import { buildIndex, identifyInput, describeOutputs, touchedMask } from './src/identify.js';
 import { Bridge } from './src/bridge.js';
 import { HaMqtt } from './src/hamqtt.js';
 
@@ -130,8 +131,13 @@ ha.onLog = (msg) => { console.log('[ha]', msg); broadcast({ type: 'ha-log', msg,
 let haMode = ['bridge', 'rules', 'both'].includes(process.env.HEIMAUTO_MODE)
   ? process.env.HEIMAUTO_MODE : 'rules';
 
+// Event-Key -> Regelketten, für die Live-Zuordnung (siehe src/identify.js).
+let ruleIndex = new Map();
+
 function rebuildEntities() {
-  entities = mergeOverrides(deriveEntities(rulebase, { labels, modules: discoveredModules }), entityOverrides);
+  ruleIndex = buildIndex(rulebase);
+  entities = mergeOverrides(deriveEntities(rulebase, { labels, modules: discoveredModules }),
+                            entityOverrides, { labels });
   bridge.setEntities(entities);
   ha.setEntities(entities, entityOverrides);
   publishSystem();
@@ -153,8 +159,30 @@ bridge.onState = (entity, state) => {
 
 // Live master automaton (Methode 3): poll responses -> rules -> computed outputs
 const live = new LiveController(simulator);
-live.onInput = (M, sub, prev, val) => bridge.noteInput(M, sub, prev, val);
-live.onAutomat = (evt) => broadcast({ type: 'automat', t: Date.now(), ...evt });
+live.onInput = (M, sub, prev, val) => {
+  bridge.noteInput(M, sub, prev, val);
+  // Live-Zuordnung: JEDER geänderte Eingangsbit wird gemeldet — auch einer, für
+  // den es (noch) keine Entität gibt. Genau die sind ja die interessanten.
+  const changed = prev === undefined ? 0 : (prev ^ val) & 0xff;
+  for (let bit = 0; bit < 8; bit++) {
+    if (!(changed & (1 << bit))) continue;
+    const info = identifyInput({ module: M, sub, bit, value: val, prev },
+                               { index: ruleIndex, entities, labels });
+    broadcast({ type: 'ident', t: Date.now(), source: 'eingang', ...info });
+  }
+};
+live.onAutomat = (evt) => {
+  broadcast({ type: 'automat', t: Date.now(), ...evt });
+  // Dieselbe Karte wie beim Tastendruck, aber mit dem, was WIRKLICH gelaufen ist:
+  // Eingangsgerät, ausgeführte Ketten und die geschalteten Ausgangsgeräte.
+  if (!evt || evt.module === undefined) return;
+  const info = identifyInput({ module: evt.module, sub: evt.sub, bit: evt.bit, value: null, prev: null },
+                             { index: ruleIndex, entities, labels });
+  const touched = touchedMask(ruleIndex, info.eventKey, evt.module);
+  broadcast({ type: 'ident', t: Date.now(), source: 'regel',
+              ...info, pressed: Boolean(evt.rising), ran: evt.ran,
+              fired: describeOutputs(evt.outputs, { entities, labels, touched }) });
+};
 // Rule output -> real bus frame. Faithful pulse: send the output once (a few
 // cycles for reliability), then revert the module to scan-poll; the module
 // latches the relay level.
@@ -531,6 +559,19 @@ app.post('/api/bus/discover', async (req, res) => {
   res.json({ ok: true, count: list.length, modules: list });
 });
 
+// Modulliste ohne Scan setzen (die Adressen der Anlage sind bekannt: 0x10-0x1C,
+// 0x20-0x24, 0x30-0x31, 0x40-0x44). Nützlich, um den Scan zu überspringen, die
+// Liste zu pinnen — und um am MOCK-Port zu arbeiten, wo ein Scan nichts aussagt
+// (der Loopback "antwortet" auf jede Adresse).
+app.post('/api/bus/modules', (req, res) => {
+  const list = Array.isArray(req.body?.addrs) ? req.body.addrs : [];
+  discoveredModules = [...new Set(list.map((x) => Number(x) & 0xff))].sort((a, b) => a - b);
+  live.setModules(discoveredModules);
+  rebuildEntities();
+  broadcast({ type: 'discover', modules: discoveredModules.map((m) => ({ addr: m, hex: '0x' + m.toString(16).toUpperCase().padStart(2, '0'), reply: '' })) });
+  res.json({ ok: true, count: discoveredModules.length, modules: discoveredModules });
+});
+
 // Start/stop the round-robin poller (drives the live monitoring).
 app.post('/api/bus/poll', (req, res) => {
   const run = Boolean(req.body?.run);
@@ -620,6 +661,71 @@ app.post('/api/bus/timebase', (req, res) => {
   res.json({ ok: true, running: Boolean(timeBaseTimer), intervalMs });
 });
 
+
+
+// --- Live-Zuordnung -------------------------------------------------------
+// Auf Zuruf: alles, was über eine Eingangsadresse bekannt ist (Token "1A.0.6").
+app.get('/api/identify/:token', (req, res) => {
+  const m = String(req.params.token).match(/^([0-9a-fA-F]{1,2})\.([0-9a-fA-F])\.(\d)$/);
+  if (!m) return res.status(400).json({ error: 'Token erwartet als Modul.Sub.Bit, z. B. 1A.0.6' });
+  const info = identifyInput({ module: parseInt(m[1], 16), sub: parseInt(m[2], 16), bit: Number(m[3]) },
+                             { index: ruleIndex, entities, labels });
+  res.json(info);
+});
+
+// Sofort-Benennung aus der Zuordnungskarte: Taster drücken, Namen tippen, fertig.
+// Der Klarname wird auf der ADRESS-Ebene gespeichert (labels.json) — dieselbe
+// Schicht, die der Automationen-Tab nutzt und aus der die Entitätsnamen
+// abgeleitet werden. Ein evtl. abweichender Name im Entitäts-Override wird
+// entfernt, damit es nur eine Quelle der Wahrheit gibt.
+app.post('/api/identify/label', (req, res) => {
+  const token = String(req.body?.token || '').toUpperCase();
+  if (!/^[0-9A-F]{2}\.[0-9A-F](\.\d)?$/.test(token)) {
+    return res.status(400).json({ error: 'Token erwartet als Modul.Sub.Bit, z. B. 1A.0.6' });
+  }
+  const name = String(req.body?.name || '').trim();
+  if (name) labels[token] = name; else delete labels[token];
+  saveLabels(labels);
+
+  const id = req.body?.entityId;
+  entityOverrides.entities = entityOverrides.entities || {};
+
+  // Ein Eingang, den die Regelbasis nie als Auslöser benutzt, hat keine
+  // abgeleitete Entität — ohne diesen Zweig bliebe er für Home Assistant
+  // unsichtbar, obwohl der Taster physisch existiert und gerade gedrückt wurde.
+  if (req.body?.create && name) {
+    const m = token.match(/^([0-9A-F]{2})\.([0-9A-F])\.(\d)$/);
+    if (m && !entities.some((e) => e.id === id)) {
+      const newId = id || `input_${m[1].toLowerCase()}_${parseInt(m[2], 16)}_${Number(m[3])}`;
+      entityOverrides.entities[newId] = {
+        ...(entityOverrides.entities[newId] || {}),
+        kind: req.body.kind || 'button',
+        module: parseInt(m[1], 16), sub: parseInt(m[2], 16), bit: Number(m[3]),
+        enabled: true, source: 'manual',
+      };
+      if (req.body?.area) entityOverrides.entities[newId].area = String(req.body.area).trim();
+    }
+  }
+
+  if (id && entityOverrides.entities?.[id]) {
+    delete entityOverrides.entities[id].name;
+    if (Object.keys(entityOverrides.entities[id]).length === 0) delete entityOverrides.entities[id];
+  }
+  const areaTarget = id || (req.body?.create ? `input_${token.slice(0, 2).toLowerCase()}_${parseInt(token.slice(3, 4), 16)}_${token.slice(5)}` : null);
+  if (areaTarget && req.body?.area !== undefined) {
+    const area = String(req.body.area || '').trim();
+    const ov = entityOverrides.entities[areaTarget] || {};
+    if (area) ov.area = area; else delete ov.area;
+    if (Object.keys(ov).length) entityOverrides.entities[areaTarget] = ov;
+    else delete entityOverrides.entities[areaTarget];
+  }
+  writeJson(ENTITIES_JSON, entityOverrides);
+  rebuildEntities();
+  if (ha.connected) { ha.publishDiscovery(); bridge.publishAll(); }
+  broadcast({ type: 'entities', count: entities.length });
+  const entity = entities.find((e) => e.id === (id || areaTarget)) || null;
+  res.json({ ok: true, token, name: name || null, entity, created: Boolean(req.body?.create && entity && entity.source === 'manual') });
+});
 
 // ---- Home Assistant: Entitäten, MQTT, Betriebsart ---------------------------
 

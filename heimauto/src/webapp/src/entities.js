@@ -246,7 +246,9 @@ export function deriveEntities(rulebase, { labels = {}, modules = [] } = {}) {
 // Merge derived entities with the user's overrides (data/entities.json).
 // An override may change name/kind/area/deviceClass/travelSec/enabled and may
 // add entities that the rule base does not mention.
-export function mergeOverrides(derived, overrides = {}) {
+const KIND_NAME = { cover: 'Jalousie', dimmer: 'Dimmer', light: 'Licht', switch: 'Schalter', button: 'Taster' };
+
+export function mergeOverrides(derived, overrides = {}, { labels = {} } = {}) {
   const byId = new Map(derived.map((e) => [e.id, { ...e }]));
   for (const [id, ov] of Object.entries(overrides.entities || {})) {
     const base = byId.get(id) || { id, source: 'manual' };
@@ -257,6 +259,14 @@ export function mergeOverrides(derived, overrides = {}) {
   for (const e of list) {
     if (e.enabled === undefined) e.enabled = !e.internal;
     e.area = e.area || areaOf(e, overrides);
+    // Von Hand angelegte Entitäten (Adressen, die in der Regelbasis nicht
+    // vorkommen) haben keinen abgeleiteten Namen: Klarname aus der Label-Schicht
+    // ziehen, sonst einen sprechenden Platzhalter — ein Name ist Pflicht, sonst
+    // steht in Home Assistant eine leere Entität.
+    if (!e.name) {
+      const token = e.bit === undefined ? `${hx2(e.module)}.${e.sub}` : `${hx2(e.module)}.${e.sub}.${e.bit}`;
+      e.name = labels[token] || `${KIND_NAME[e.kind] || 'Gerät'} ${token}`;
+    }
   }
   return list.sort((a, b) => (a.module - b.module) || a.id.localeCompare(b.id));
 }

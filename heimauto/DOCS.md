@@ -50,9 +50,34 @@ Git-Repository pushen und die Repository-URL im Add-on-Store unter
 | `mode` | `bridge` | `bridge` = Home Assistant orchestriert, die Regelbasis läuft **nicht**. `rules` = originalgetreu, die `.hrb` schaltet selbst. `both` = Übergangsbetrieb. |
 | `scan_start` / `scan_end` | `0x10` / `0x4F` | Adressbereich des Modul-Scans beim Start (die Anlage antwortet auf 0x10–0x1C, 0x20–0x24, 0x30–0x31, 0x40–0x44). |
 | `mqtt_host` / `mqtt_port` | *(leer)* / `1883` | Nur nötig, wenn der Broker **nicht** das Mosquitto-Add-on ist. |
-| `mqtt_user` / `mqtt_password` | *(leer)* | dito. |
+| `mqtt_user` / `mqtt_password` | *(leer)* | dito — siehe „Zugangsdaten" unten. |
 | `mqtt_base` | `heimauto` | Basis-Topic für Status und Kommandos. |
 | `discovery_prefix` | `homeassistant` | MQTT-Discovery-Prefix (muss zur MQTT-Integration passen). |
+
+### Zugangsdaten
+
+Leer lassen, wenn der Broker das **Mosquitto-Add-on** ist: Home Assistant gibt
+dem Add-on über `services: mqtt:want` eigene, automatisch verwaltete
+Zugangsdaten — kein Benutzer, kein Passwort zu pflegen, nichts bricht bei einer
+Passwortänderung.
+
+Eigene Angaben werden **feldweise** bevorzugt; alles Leere füllt der Dienst auf.
+Benutzer und Passwort werden nur *gemeinsam* übernommen (ein halber Datensatz
+ergibt keinen Login).
+
+Für einen externen Broker oder die Standalone-Webapp (ohne Add-on-Dienst) braucht
+es echte Zugangsdaten. Das Mosquitto-Add-on akzeptiert dafür **Home-Assistant-
+Benutzerkonten**, d. h. der eigene HA-Login funktioniert. Besser ist ein eigener
+Zugang, weil der Bridge keinen Zugriff auf Home Assistant selbst braucht und
+eine Passwortänderung sonst den Bus lahmlegt:
+
+* entweder ein **eigener HA-Benutzer** (Einstellungen → Personen → Benutzer,
+  z. B. `mqtt-heimauto`, *ohne* Administratorrechte, „Nur lokal" ist in Ordnung),
+* oder ein Login direkt in den **Mosquitto-Optionen** (`logins:` mit
+  `username`/`password`), dann existiert er nur im Broker.
+
+Anonymen Zugriff freizuschalten ist der schlechtere Weg — dann darf jedes Gerät
+im Netz die Anlage schalten.
 
 ## 4. Was beim Start passiert
 
@@ -85,6 +110,33 @@ aber standardmäßig **nicht** gemeldet.
 
 Zusätzlich meldet sich das Add-on selbst als Gerät *Heimauto HomeBus Master* mit
 den Diagnose-Entitäten „HomeBus Polling", „HomeBus Module" und „Betriebsart".
+
+### Zuordnen: welcher Taster ist das?
+
+Tab **Live-Zuordnung** — dafür gebaut, dass man 150 Entitäten *nicht* im Blick
+behalten muss:
+
+1. **Zuordnung starten** (setzt Polling + Live-Betrieb in Gang, die Betriebsart
+   bleibt unverändert).
+2. Einen Taster an der Wand drücken.
+3. Die Karte zeigt sofort: Adresse (`12.0.7`), Klarname, zugehörige Entität,
+   Event-Key, die Regelketten der Original-Konfiguration im Klartext und die
+   Geräte, die daran hängen — auch wenn sie auf einem *anderen* Modul sitzen.
+4. Namen (und Bereich) eintippen, **Enter**. Der Klarname gilt sofort überall:
+   Automationen-Tab, Entitätenliste und Home Assistant (Discovery wird neu
+   gesendet).
+
+Läuft die Regelbasis mit (Betriebsart `rules` oder `both`), steht in der Karte
+zusätzlich, was **tatsächlich** geschaltet wurde, mit Zustand — z. B.
+„HWR Licht: EIN", „Jalousie HWR: fährt zu", „Dimmer 11: Pegel 100 %".
+
+Kommt eine Adresse in der Regelbasis überhaupt nicht als Auslöser vor (es gibt
+solche Taster), bleibt „an HA melden" angehakt: daraus wird ein `binary_sensor`,
+der vorher unsichtbar war.
+
+Der Verlauf (30 Einträge) lässt sich auf **nur unbenannte** filtern — so
+arbeitet man die Anlage Raum für Raum ab. Optional piept es bei jeder Erkennung,
+damit man beim Drücken nicht auf den Schirm schauen muss.
 
 ### Kuratieren
 
